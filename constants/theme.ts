@@ -1,0 +1,80 @@
+export const Colors = {
+  primary: {
+    50: '#FFF8F0',
+    100: '#FFEDD5',
+    200: '#FED7AA',
+    300: '#FDBA74',
+    400: '#FB923C',
+    500: '#F97316',
+    600: '#EA580C',
+    700: '#C2410C',
+    800: '#9A3412',
+    900: '#7C2D12',
+  },
+  warm: {
+    50: '#FFFBF5',
+    100: '#FFF5E8',
+    200: '#FFE8CC',
+    300: '#FFD9A8',
+    400: '#FFC77D',
+    500: '#FFB347',
+  },
+  neutral: {
+    50: '#FAFAF9',
+    100: '#F5F5F4',
+    200: '#E7E5E4',
+    300: '#D6D3D1',
+    400: '#A8A29E',
+    500: '#78716C',
+    600: '#57534E',
+    700: '#44403C',
+    800: '#292524',
+    900: '#1C1917',
+  },
+  success: {
+    50: '#F0FDF4',
+    100: '#DCFCE7',
+    400: '#4ADE80',
+    500: '#22C55E',
+    600: '#16A34A',
+  },
+  error: {
+    50: '#FEF2F2',
+    100: '#FEE2E2',
+    400: '#F87171',
+    500: '#EF4444',
+    600: '#DC2626',
+  },
+  background: '#FFFBF5',
+  surface: '#FFFFFF',
+  text: '#1C1917',
+  textSecondary: '#78716C',
+  border: '#E7E5E4',
+};
+
+export const Spacing = {
+  xs: 4,
+  sm: 8,
+  md: 16,
+  lg: 24,
+  xl: 32,
+  xxl: 48,
+};
+
+export const BorderRadius = {
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  full: 9999,
+};
+
+export const FontSizes = {
+  xs: 12,
+  sm: 14,
+  md: 16,
+  lg: 18,
+  xl: 20,
+  xxl: 28,
+  xxxl: 36,
+};
