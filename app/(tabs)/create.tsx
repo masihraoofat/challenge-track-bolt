@@ -15,8 +15,15 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { showToast } from '@/components/Toast';
-import { ArrowLeft, BookOpen, Share, Copy } from 'lucide-react-native';
+import { ArrowLeft, BookOpen, Copy, Activity, Smartphone } from 'lucide-react-native';
 import DatePicker from '@/components/DatePicker';
+import { CompetitionType, COMPETITION_TYPES } from '@/constants/competition';
+
+const TYPE_ICONS: Record<string, React.ReactNode> = {
+  reading: <BookOpen size={24} color={Colors.primary[600]} />,
+  running: <Activity size={24} color={Colors.blue[600]} />,
+  screen_time: <Smartphone size={24} color={Colors.teal[600]} />,
+};
 
 export default function CreateCompetitionScreen() {
   const router = useRouter();
@@ -24,10 +31,12 @@ export default function CreateCompetitionScreen() {
   const [title, setTitle] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [compType, setCompType] = useState<CompetitionType>('reading');
   const [loading, setLoading] = useState(false);
   const [createdCode, setCreatedCode] = useState<string | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
+  const typeConfig = COMPETITION_TYPES[compType];
 
   const handleCreate = async () => {
     if (!title.trim()) {
@@ -53,6 +62,7 @@ export default function CreateCompetitionScreen() {
         start_date: startDate,
         end_date: endDate,
         creator_id: user.id,
+        competition_type: compType,
       })
       .select()
       .single();
@@ -78,7 +88,7 @@ export default function CreateCompetitionScreen() {
     await supabase.from('analytics_events').insert({
       user_id: user.id,
       event_type: 'competition_created',
-      event_data: { competition_id: competition.id, title: title.trim() },
+      event_data: { competition_id: competition.id, title: title.trim(), type: compType },
     });
 
     setLoading(false);
@@ -110,26 +120,26 @@ export default function CreateCompetitionScreen() {
         </View>
 
         <View style={styles.successContent}>
-          <View style={styles.successIcon}>
-            <BookOpen size={40} color={Colors.success[600]} />
+          <View style={[styles.successIcon, { backgroundColor: typeConfig.colorSet[100] }]}>
+            {TYPE_ICONS[compType]}
           </View>
           <Text style={styles.successTitle}>All set!</Text>
           <Text style={styles.successSubtitle}>
-            Share this code with friends so they can join your reading challenge
+            Share this code with friends so they can join your {typeConfig.label.toLowerCase()} challenge
           </Text>
 
-          <View style={styles.codeCard}>
+          <View style={[styles.codeCard, { borderColor: typeConfig.colorSet[200] }]}>
             <Text style={styles.codeLabel}>Join Code</Text>
-            <Text style={styles.codeText}>{createdCode}</Text>
+            <Text style={[styles.codeText, { color: typeConfig.colorSet[600] }]}>{createdCode}</Text>
           </View>
 
-          <TouchableOpacity style={styles.shareButton} onPress={handleCopyCode}>
+          <TouchableOpacity style={[styles.shareButton, { backgroundColor: typeConfig.colorSet[500] }]} onPress={handleCopyCode}>
             <Copy size={20} color="#FFFFFF" />
             <Text style={styles.shareButtonText}>Copy Code</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.doneButton} onPress={() => router.back()}>
-            <Text style={styles.doneButtonText}>Done</Text>
+            <Text style={[styles.doneButtonText, { color: typeConfig.colorSet[600] }]}>Done</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -151,27 +161,58 @@ export default function CreateCompetitionScreen() {
         </View>
 
         <View style={styles.iconSection}>
-          <View style={styles.iconContainer}>
-            <BookOpen size={36} color={Colors.primary[600]} />
+          <View style={[styles.iconContainer, { backgroundColor: typeConfig.colorSet[100] }]}>
+            {TYPE_ICONS[compType]}
           </View>
-          <Text style={styles.sectionTitle}>Create a Reading Challenge</Text>
+          <Text style={styles.sectionTitle}>Create a Challenge</Text>
           <Text style={styles.sectionSubtitle}>
-            Set up a competition and invite friends to join your reading streak
+            Set up a competition and invite friends to join
           </Text>
         </View>
 
         <View style={styles.form}>
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Challenge Type</Text>
+            <View style={styles.typeRow}>
+              {(Object.keys(COMPETITION_TYPES) as CompetitionType[]).map((t) => {
+                const cfg = COMPETITION_TYPES[t];
+                const selected = t === compType;
+                return (
+                  <TouchableOpacity
+                    key={t}
+                    style={[
+                      styles.typeChip,
+                      selected && { backgroundColor: cfg.colorSet[100], borderColor: cfg.colorSet[500] },
+                    ]}
+                    onPress={() => {
+                      setCompType(t);
+                      setTitle('');
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.typeIcon, selected && { backgroundColor: cfg.colorSet[200] }]}>
+                      {TYPE_ICONS[t]}
+                    </View>
+                    <Text style={[styles.typeLabel, selected && { color: cfg.colorSet[700] }]}>
+                      {cfg.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Competition Title</Text>
             <TextInput
               style={styles.input}
               value={title}
               onChangeText={setTitle}
-              placeholder="e.g. Read 20 pages a day"
+              placeholder={typeConfig.placeholder}
               placeholderTextColor={Colors.neutral[400]}
               maxLength={60}
             />
-            <Text style={styles.hint}>Describe the daily reading goal</Text>
+            <Text style={styles.hint}>{typeConfig.description}</Text>
           </View>
 
           <View style={styles.dateRow}>
@@ -194,7 +235,7 @@ export default function CreateCompetitionScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[styles.button, loading && styles.buttonDisabled, { backgroundColor: typeConfig.colorSet[500] }]}
             onPress={handleCreate}
             disabled={loading}
           >
@@ -247,7 +288,6 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: BorderRadius.xl,
-    backgroundColor: Colors.primary[100],
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: Spacing.md,
@@ -290,6 +330,34 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     color: Colors.neutral[400],
   },
+  typeRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  typeChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.lg,
+    gap: Spacing.xs,
+  },
+  typeIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.neutral[100],
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  typeLabel: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    color: Colors.neutral[500],
+  },
   dateRow: {
     flexDirection: 'row',
     gap: Spacing.md,
@@ -298,7 +366,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   button: {
-    backgroundColor: Colors.primary[500],
     borderRadius: BorderRadius.md,
     paddingVertical: Spacing.md + 2,
     alignItems: 'center',
@@ -322,7 +389,6 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: BorderRadius.xl,
-    backgroundColor: Colors.success[100],
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: Spacing.lg,
@@ -346,7 +412,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
     borderWidth: 2,
-    borderColor: Colors.primary[200],
     alignItems: 'center',
     width: '100%',
     marginBottom: Spacing.lg,
@@ -362,7 +427,6 @@ const styles = StyleSheet.create({
   codeText: {
     fontSize: FontSizes.xxxl,
     fontWeight: '700',
-    color: Colors.primary[600],
     letterSpacing: 3,
   },
   shareButton: {
@@ -370,7 +434,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.sm,
-    backgroundColor: Colors.primary[500],
     borderRadius: BorderRadius.md,
     paddingVertical: Spacing.md + 2,
     paddingHorizontal: Spacing.xl,
@@ -387,7 +450,6 @@ const styles = StyleSheet.create({
   },
   doneButtonText: {
     fontSize: FontSizes.md,
-    color: Colors.primary[600],
     fontWeight: '600',
   },
 });

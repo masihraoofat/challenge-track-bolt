@@ -16,8 +16,9 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
-import { Trophy, Calendar, Users, Plus, BookOpen, Flame, Zap, LogIn } from 'lucide-react-native';
+import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn, BookOpen, Activity, Smartphone } from 'lucide-react-native';
 import { showToast } from '@/components/Toast';
+import { CompetitionType, getCompetitionTypeConfig } from '@/constants/competition';
 
 interface ParticipantInfo {
   user_id: string;
@@ -31,8 +32,21 @@ interface CompetitionWithParticipation {
   end_date: string;
   creator_id: string;
   join_code: string;
+  competition_type: string;
   participants: ParticipantInfo[];
 }
+
+const TYPE_ICONS: Record<string, React.ReactNode> = {
+  reading: <BookOpen size={20} color={Colors.primary[500]} />,
+  running: <Activity size={20} color={Colors.blue[500]} />,
+  screen_time: <Smartphone size={20} color={Colors.teal[500]} />,
+};
+
+const TYPE_ICONS_SMALL: Record<string, React.ReactNode> = {
+  reading: <BookOpen size={14} color={Colors.primary[600]} />,
+  running: <Activity size={14} color={Colors.blue[600]} />,
+  screen_time: <Smartphone size={14} color={Colors.teal[600]} />,
+};
 
 export default function HomeScreen() {
   const { user } = useAuth();
@@ -177,8 +191,6 @@ export default function HomeScreen() {
     return me?.score || 0;
   };
 
-  const getStreak = (score: number) => score;
-
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -188,11 +200,14 @@ export default function HomeScreen() {
   }
 
   const renderCompetition = ({ item }: { item: CompetitionWithParticipation }) => {
+    const compType = (item.competition_type || 'reading') as CompetitionType;
+    const typeConfig = getCompetitionTypeConfig(compType);
+    const colorSet = typeConfig.colorSet;
     const active = isCompetitionActive(item);
     const daysLeft = getDaysRemaining(item);
     const participantCount = item.participants?.length || 0;
     const myScore = getMyScore(item);
-    const streak = getStreak(myScore);
+    const streak = myScore;
     const hasFlame = streak > 1;
 
     const totalDays = Math.max(
@@ -205,17 +220,29 @@ export default function HomeScreen() {
     );
     const progressPct = Math.min(100, (myScore / totalDays) * 100);
 
+    const getScoreDisplay = () => {
+      if (compType === 'reading') return `${myScore} day${myScore !== 1 ? 's' : ''}`;
+      if (compType === 'running') return `${myScore} km`;
+      return `${myScore} hr${myScore !== 1 ? 's' : ''}`;
+    };
+
     return (
       <TouchableOpacity
-        style={styles.card}
+        style={[styles.card, { borderLeftWidth: 4, borderLeftColor: colorSet[500] }]}
         onPress={() => router.push(`/competition/${item.id}`)}
         activeOpacity={0.7}
       >
         <View style={styles.cardHeader}>
-          <View style={[styles.statusBadge, active ? styles.statusActive : styles.statusEnded]}>
-            <Text style={[styles.statusText, active ? styles.statusTextActive : styles.statusTextEnded]}>
-              {active ? 'Active' : 'Ended'}
-            </Text>
+          <View style={styles.cardHeaderLeft}>
+            <View style={[styles.typeChipSmall, { backgroundColor: colorSet[100] }]}>
+              {TYPE_ICONS_SMALL[compType]}
+              <Text style={[styles.typeChipText, { color: colorSet[700] }]}>{typeConfig.label}</Text>
+            </View>
+            <View style={[styles.statusBadge, active ? styles.statusActive : styles.statusEnded]}>
+              <Text style={[styles.statusText, active ? styles.statusTextActive : styles.statusTextEnded]}>
+                {active ? 'Active' : 'Ended'}
+              </Text>
+            </View>
           </View>
           <View style={styles.participantCount}>
             <Users size={14} color={Colors.neutral[500]} />
@@ -225,7 +252,7 @@ export default function HomeScreen() {
 
         <View style={styles.cardBody}>
           <View style={styles.iconRow}>
-            <BookOpen size={20} color={Colors.primary[500]} />
+            {TYPE_ICONS[compType]}
             <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
           </View>
           <View style={styles.dateRow}>
@@ -239,7 +266,7 @@ export default function HomeScreen() {
         <View style={styles.scoreSection}>
           <View style={styles.scoreRow}>
             <View style={styles.scoreLeft}>
-              <Zap size={16} color={Colors.primary[500]} />
+              <Zap size={16} color={colorSet[500]} />
               <Text style={styles.scoreLabel}>Your score</Text>
             </View>
             <View style={styles.scoreRight}>
@@ -249,17 +276,17 @@ export default function HomeScreen() {
                   <Text style={styles.flameText}>{streak} day streak</Text>
                 </View>
               )}
-              <Text style={styles.scoreNumber}>{myScore}</Text>
+              <Text style={[styles.scoreNumber, { color: colorSet[600] }]}>{getScoreDisplay()}</Text>
             </View>
           </View>
           <View style={styles.progressBarBg}>
-            <View style={[styles.progressBarFill, { width: `${progressPct}%` }]} />
+            <View style={[styles.progressBarFill, { width: `${progressPct}%`, backgroundColor: colorSet[500] }]} />
           </View>
         </View>
 
         {active && (
           <View style={styles.cardFooter}>
-            <Text style={styles.daysText}>
+            <Text style={[styles.daysText, { color: colorSet[600] }]}>
               {daysLeft > 0 ? `${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining` : 'Final day!'}
             </Text>
             <Trophy size={16} color={Colors.warm[500]} />
@@ -289,7 +316,7 @@ export default function HomeScreen() {
           </View>
           <Text style={styles.emptyTitle}>No competitions yet</Text>
           <Text style={styles.emptySubtitle}>
-            Create your first reading competition or join one with a code!
+            Create your first competition or join one with a code!
           </Text>
         </View>
       ) : (
@@ -435,6 +462,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.md,
   },
+  cardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  typeChipSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+  },
+  typeChipText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '700',
+  },
   statusBadge: {
     paddingHorizontal: Spacing.sm + 2,
     paddingVertical: Spacing.xs,
@@ -529,7 +573,6 @@ const styles = StyleSheet.create({
   scoreNumber: {
     fontSize: FontSizes.lg,
     fontWeight: '700',
-    color: Colors.primary[600],
   },
   progressBarBg: {
     height: 6,
@@ -539,7 +582,6 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: Colors.primary[500],
     borderRadius: BorderRadius.full,
   },
   cardFooter: {
@@ -553,7 +595,6 @@ const styles = StyleSheet.create({
   },
   daysText: {
     fontSize: FontSizes.sm,
-    color: Colors.primary[600],
     fontWeight: '600',
   },
   emptyState: {
