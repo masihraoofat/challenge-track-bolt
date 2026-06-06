@@ -33,6 +33,7 @@ import {
   formatScore,
   getCompetitionTypeConfig,
   parseScreenTimeLog,
+  toScoreNumber,
 } from '@/constants/competition';
 
 interface LeaderboardEntry {
@@ -107,30 +108,40 @@ export default function CompetitionDetailScreen() {
 
     const checkedIn = !!todayLog;
     setCheckedInToday(checkedIn);
-    setTodayLoggedValue(checkedIn ? (todayLog?.value ?? null) : null);
+    setTodayLoggedValue(
+      checkedIn && todayLog?.value != null ? toScoreNumber(todayLog.value) : null
+    );
 
     if (participants) {
       const todayValues: Record<string, number | null> = {};
+      const logTotals: Record<string, number> = {};
 
-      // Get today's values for all participants
       if (compType !== 'reading') {
-        const { data: todayLogs } = await supabase
+        const { data: allLogs } = await supabase
           .from('daily_logs')
-          .select('user_id, value')
+          .select('user_id, value, date_logged')
           .eq('competition_id', id)
-          .eq('date_logged', today)
           .eq('completed', true);
-        if (todayLogs) {
-          todayLogs.forEach((log: any) => {
-            todayValues[log.user_id] = log.value ?? null;
+
+        if (allLogs) {
+          allLogs.forEach((log: any) => {
+            const val = toScoreNumber(log.value);
+            logTotals[log.user_id] = (logTotals[log.user_id] || 0) + val;
+            if (log.date_logged === today) {
+              todayValues[log.user_id] = val;
+            }
           });
         }
       }
 
       const entries: LeaderboardEntry[] = await Promise.all(
         participants.map(async (p: any) => {
+          const participantScore =
+            compType === 'reading'
+              ? toScoreNumber(p.score)
+              : (logTotals[p.user_id] ?? 0);
           let streak = 0;
-          if (p.score > 0) {
+          if (participantScore > 0) {
             const { data: recentLogs } = await supabase
               .from('daily_logs')
               .select('date_logged')
@@ -160,7 +171,7 @@ export default function CompetitionDetailScreen() {
 
           return {
             user_id: p.user_id,
-            score: p.score,
+            score: participantScore,
             username: p.users?.username || 'Unknown',
             isCurrentUser: p.user_id === user.id,
             streak,
@@ -270,25 +281,19 @@ export default function CompetitionDetailScreen() {
       }
     }
 
-    const { error: scoreError } = await supabase.rpc('increment_score', {
-      comp_id: id,
-      uid: user.id,
-      amount: scoreAmount,
-    });
+    const currentScore = toScoreNumber(
+      leaderboard.find((e) => e.isCurrentUser)?.score
+    );
+    const { error: updateError } = await supabase
+      .from('participants')
+      .update({ score: currentScore + scoreAmount })
+      .eq('competition_id', id)
+      .eq('user_id', user.id);
 
-    if (scoreError) {
-      const currentScore = leaderboard.find((e) => e.isCurrentUser)?.score ?? 0;
-      const { error: updateError } = await supabase
-        .from('participants')
-        .update({ score: currentScore + scoreAmount })
-        .eq('competition_id', id)
-        .eq('user_id', user.id);
-
-      if (updateError) {
-        showToast('Score update failed', 'error');
-        setCheckingIn(false);
-        return;
-      }
+    if (updateError) {
+      showToast('Score update failed', 'error');
+      setCheckingIn(false);
+      return;
     }
 
     await supabase.from('analytics_events').insert({
@@ -338,6 +343,14 @@ export default function CompetitionDetailScreen() {
     } catch {
       showToast('Could not copy code', 'error');
     }
+  };
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(tabs)');
   };
 
   if (loading) {
@@ -401,7 +414,14 @@ export default function CompetitionDetailScreen() {
         </View>
         <View style={styles.scoreContainer}>
           {TYPE_ICONS[compType]}
-          <Text style={[styles.scoreText, { color: colorSet[600] }]}>{getScoreDisplay(item)}</Text>
+          <View style={styles.scoreTextGroup}>
+            <Text style={[styles.scoreText, { color: colorSet[600] }]}>{getScoreDisplay(item)}</Text>
+            {compType === 'screen_time' && item.todayValue != null && (
+              <Text style={styles.todayScoreText}>
+                Today: {formatDuration(item.todayValue)}
+              </Text>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -416,7 +436,13 @@ export default function CompetitionDetailScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity
+          onPress={handleBack}
+          style={styles.backButton}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <ArrowLeft size={24} color={Colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleRow}>
@@ -590,6 +616,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.xl,
     paddingBottom: Spacing.md,
     backgroundColor: Colors.background,
+    zIndex: 1,
   },
   backButton: {
     width: 40,
@@ -858,8 +885,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.xs,
   },
+  scoreTextGroup: {
+    alignItems: 'flex-end',
+    gap: 2,
+  },
   scoreText: {
     fontSize: FontSizes.md,
     fontWeight: '700',
+  },
+  todayScoreText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '500',
+    color: Colors.neutral[500],
   },
 });

@@ -52,13 +52,20 @@ export function getCompetitionTypeConfig(type: string) {
   return COMPETITION_TYPES[(type as CompetitionType) || 'reading'] || COMPETITION_TYPES.reading;
 }
 
+/** Supabase returns PostgreSQL numeric columns as strings — normalize everywhere. */
+export function toScoreNumber(value: unknown): number {
+  if (value === null || value === undefined || value === '') return 0;
+  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  return Number.isFinite(n) ? n : 0;
+}
+
 function trimZeros(n: number, maxDecimals: number): string {
   if (Number.isInteger(n)) return n.toString();
   return parseFloat(n.toFixed(maxDecimals)).toString();
 }
 
-export function formatDuration(decimalHours: number): string {
-  const safe = Number.isFinite(decimalHours) ? Math.max(0, decimalHours) : 0;
+export function formatDuration(decimalHours: unknown): string {
+  const safe = Math.max(0, toScoreNumber(decimalHours));
   const totalMinutes = Math.round(safe * 60);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -93,14 +100,14 @@ export function parseScreenTimeLog(
   return { decimalHours: hours + minutes / 60 };
 }
 
-export function formatScore(type: CompetitionType, score: number): string {
-  const safe = Number.isFinite(score) ? score : 0;
+export function formatScore(type: CompetitionType, score: unknown): string {
+  const safe = toScoreNumber(score);
   if (type === 'reading') {
     const n = Math.round(safe);
     return `${n} ${n === 1 ? 'day' : 'days'}`;
   }
   if (type === 'running') {
-    return `${trimZeros(safe, 1)} km`;
+    return safe === 0 ? 'No logs yet' : `${trimZeros(safe, 1)} km`;
   }
-  return formatDuration(safe);
+  return safe === 0 ? 'No logs yet' : formatDuration(safe);
 }

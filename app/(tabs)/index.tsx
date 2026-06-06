@@ -18,7 +18,12 @@ import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn, BookOpen, Activity, Smartphone } from 'lucide-react-native';
 import { showToast } from '@/components/Toast';
-import { CompetitionType, formatScore, getCompetitionTypeConfig } from '@/constants/competition';
+import {
+  CompetitionType,
+  formatScore,
+  getCompetitionTypeConfig,
+  toScoreNumber,
+} from '@/constants/competition';
 
 interface ParticipantInfo {
   user_id: string;
@@ -232,7 +237,7 @@ export default function HomeScreen() {
   const getMyScore = (comp: CompetitionWithParticipation) => {
     if (!user) return 0;
     const me = comp.participants?.find((p) => p.user_id === user.id);
-    return me?.score || 0;
+    return toScoreNumber(me?.score);
   };
 
   if (loading) {
