@@ -57,6 +57,42 @@ function trimZeros(n: number, maxDecimals: number): string {
   return parseFloat(n.toFixed(maxDecimals)).toString();
 }
 
+export function formatDuration(decimalHours: number): string {
+  const safe = Number.isFinite(decimalHours) ? Math.max(0, decimalHours) : 0;
+  const totalMinutes = Math.round(safe * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours === 0 && minutes === 0) return '0 min';
+  if (hours === 0) return `${minutes} min`;
+  if (minutes === 0) return `${hours} hr${hours === 1 ? '' : 's'}`;
+  return `${hours} hr${hours === 1 ? '' : 's'} ${minutes} min`;
+}
+
+export function parseScreenTimeLog(
+  hoursStr: string,
+  minutesStr: string,
+): { decimalHours: number } | { error: string } {
+  const hoursTrimmed = hoursStr.trim();
+  const minutesTrimmed = minutesStr.trim();
+
+  if (!hoursTrimmed && !minutesTrimmed) {
+    return { error: 'Please enter hours and/or minutes' };
+  }
+
+  const hours = hoursTrimmed ? parseInt(hoursTrimmed, 10) : 0;
+  const minutes = minutesTrimmed ? parseInt(minutesTrimmed, 10) : 0;
+
+  if (isNaN(hours) || hours < 0) {
+    return { error: 'Please enter valid hours' };
+  }
+  if (isNaN(minutes) || minutes < 0 || minutes > 59) {
+    return { error: 'Minutes must be between 0 and 59' };
+  }
+
+  return { decimalHours: hours + minutes / 60 };
+}
+
 export function formatScore(type: CompetitionType, score: number): string {
   const safe = Number.isFinite(score) ? score : 0;
   if (type === 'reading') {
@@ -66,7 +102,5 @@ export function formatScore(type: CompetitionType, score: number): string {
   if (type === 'running') {
     return `${trimZeros(safe, 1)} km`;
   }
-  const hrs = trimZeros(safe, 1);
-  const isOne = parseFloat(hrs) === 1;
-  return `${hrs} hr${isOne ? '' : 's'}`;
+  return formatDuration(safe);
 }

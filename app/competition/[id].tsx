@@ -27,7 +27,13 @@ import {
   Activity,
   Smartphone,
 } from 'lucide-react-native';
-import { CompetitionType, formatScore, getCompetitionTypeConfig } from '@/constants/competition';
+import {
+  CompetitionType,
+  formatDuration,
+  formatScore,
+  getCompetitionTypeConfig,
+  parseScreenTimeLog,
+} from '@/constants/competition';
 
 interface LeaderboardEntry {
   user_id: string;
@@ -56,6 +62,9 @@ export default function CompetitionDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
   const [logValue, setLogValue] = useState('');
+  const [logHours, setLogHours] = useState('');
+  const [logMinutes, setLogMinutes] = useState('');
+  const [todayLoggedValue, setTodayLoggedValue] = useState<number | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!id || !user) return;
@@ -98,6 +107,7 @@ export default function CompetitionDetailScreen() {
 
     const checkedIn = !!todayLog;
     setCheckedInToday(checkedIn);
+    setTodayLoggedValue(checkedIn ? (todayLog?.value ?? null) : null);
 
     if (participants) {
       const todayValues: Record<string, number | null> = {};
@@ -208,14 +218,14 @@ export default function CompetitionDetailScreen() {
       valueToLog = km;
       scoreAmount = km;
     } else if (compType === 'screen_time') {
-      const hrs = parseFloat(logValue);
-      if (!logValue || isNaN(hrs) || hrs < 0) {
-        showToast('Please enter valid hours', 'error');
+      const parsed = parseScreenTimeLog(logHours, logMinutes);
+      if ('error' in parsed) {
+        showToast(parsed.error, 'error');
         setCheckingIn(false);
         return;
       }
-      valueToLog = hrs;
-      scoreAmount = hrs;
+      valueToLog = parsed.decimalHours;
+      scoreAmount = parsed.decimalHours;
     }
 
     const { data: existingLog } = await supabase
@@ -288,8 +298,11 @@ export default function CompetitionDetailScreen() {
     });
 
     setCheckedInToday(true);
+    setTodayLoggedValue(valueToLog);
     setCheckingIn(false);
     setLogValue('');
+    setLogHours('');
+    setLogMinutes('');
     const typeConfig = getCompetitionTypeConfig(compType);
     showToast(`${typeConfig.label} logged!`, 'success');
     fetchData();
@@ -459,22 +472,57 @@ export default function CompetitionDetailScreen() {
 
             {active && (
               <View style={styles.checkInSection}>
-                {compType !== 'reading' && !checkedInToday && (
+                {compType === 'running' && !checkedInToday && (
                   <View style={styles.valueInputGroup}>
-                    <Text style={styles.valueLabel}>
-                      {compType === 'running' ? 'Kilometers ran today' : 'Hours of screen time today'}
-                    </Text>
+                    <Text style={styles.valueLabel}>Kilometers ran today</Text>
                     <TextInput
                       style={styles.valueInput}
                       value={logValue}
                       onChangeText={setLogValue}
-                      placeholder={compType === 'running' ? 'e.g. 5.2' : 'e.g. 2.5'}
+                      placeholder="e.g. 5.2"
                       placeholderTextColor={Colors.neutral[400]}
                       keyboardType="decimal-pad"
                       maxLength={6}
                     />
-                    <Text style={styles.valueUnit}>
-                      {compType === 'running' ? 'km' : 'hours'}
+                    <Text style={styles.valueUnit}>km</Text>
+                  </View>
+                )}
+                {compType === 'screen_time' && !checkedInToday && (
+                  <View style={styles.valueInputGroup}>
+                    <Text style={styles.valueLabel}>Screen time today</Text>
+                    <View style={styles.durationInputRow}>
+                      <View style={styles.durationField}>
+                        <TextInput
+                          style={styles.durationInput}
+                          value={logHours}
+                          onChangeText={setLogHours}
+                          placeholder="0"
+                          placeholderTextColor={Colors.neutral[400]}
+                          keyboardType="number-pad"
+                          maxLength={3}
+                        />
+                        <Text style={styles.durationUnit}>hr</Text>
+                      </View>
+                      <View style={styles.durationField}>
+                        <TextInput
+                          style={styles.durationInput}
+                          value={logMinutes}
+                          onChangeText={setLogMinutes}
+                          placeholder="0"
+                          placeholderTextColor={Colors.neutral[400]}
+                          keyboardType="number-pad"
+                          maxLength={2}
+                        />
+                        <Text style={styles.durationUnit}>min</Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+                {checkedInToday && compType === 'screen_time' && todayLoggedValue !== null && (
+                  <View style={[styles.loggedTodayCard, { backgroundColor: colorSet[50] }]}>
+                    <Text style={styles.loggedTodayLabel}>Logged today</Text>
+                    <Text style={[styles.loggedTodayValue, { color: colorSet[700] }]}>
+                      {formatDuration(todayLoggedValue)}
                     </Text>
                   </View>
                 )}
@@ -653,6 +701,52 @@ const styles = StyleSheet.create({
   valueUnit: {
     fontSize: FontSizes.xs,
     color: Colors.neutral[400],
+  },
+  durationInputRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  durationField: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    gap: Spacing.sm,
+  },
+  durationInput: {
+    flex: 1,
+    fontSize: FontSizes.lg,
+    color: Colors.text,
+    fontWeight: '600',
+    padding: 0,
+  },
+  durationUnit: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: Colors.neutral[500],
+  },
+  loggedTodayCard: {
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    gap: Spacing.xs,
+  },
+  loggedTodayLabel: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    color: Colors.neutral[500],
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  loggedTodayValue: {
+    fontSize: FontSizes.xl,
+    fontWeight: '700',
   },
   checkInButton: {
     flexDirection: 'row',
