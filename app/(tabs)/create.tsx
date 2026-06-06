@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,8 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
@@ -37,6 +38,22 @@ export default function CreateCompetitionScreen() {
 
   const today = new Date().toISOString().split('T')[0];
   const typeConfig = COMPETITION_TYPES[compType];
+
+  // The create screen is a hidden tab route that stays mounted, so without
+  // this reset the success screen (or any half-filled form) lingers between
+  // visits and the FAB appears to be "stuck" on the previous flow.
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        setTitle('');
+        setStartDate('');
+        setEndDate('');
+        setCompType('reading');
+        setCreatedCode(null);
+        setLoading(false);
+      };
+    }, [])
+  );
 
   const handleCreate = async () => {
     if (!title.trim()) {
@@ -99,20 +116,23 @@ export default function CreateCompetitionScreen() {
   const handleCopyCode = async () => {
     if (!createdCode) return;
     try {
-      if (Platform.OS === 'web') {
-        await navigator.clipboard.writeText(createdCode);
-        showToast('Join code copied!', 'success');
-      }
+      await Clipboard.setStringAsync(createdCode);
+      showToast('Join code copied!', 'success');
     } catch {
       showToast('Could not copy code', 'error');
     }
+  };
+
+  const handleDone = () => {
+    setCreatedCode(null);
+    router.replace('/(tabs)');
   };
 
   if (createdCode) {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={handleDone} style={styles.backButton}>
             <ArrowLeft size={24} color={Colors.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Competition Created!</Text>
@@ -138,7 +158,7 @@ export default function CreateCompetitionScreen() {
             <Text style={styles.shareButtonText}>Copy Code</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.doneButton} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.doneButton} onPress={handleDone}>
             <Text style={[styles.doneButtonText, { color: typeConfig.colorSet[600] }]}>Done</Text>
           </TouchableOpacity>
         </View>
@@ -184,10 +204,7 @@ export default function CreateCompetitionScreen() {
                       styles.typeChip,
                       selected && { backgroundColor: cfg.colorSet[100], borderColor: cfg.colorSet[500] },
                     ]}
-                    onPress={() => {
-                      setCompType(t);
-                      setTitle('');
-                    }}
+                    onPress={() => setCompType(t)}
                     activeOpacity={0.7}
                   >
                     <View style={[styles.typeIcon, selected && { backgroundColor: cfg.colorSet[200] }]}>

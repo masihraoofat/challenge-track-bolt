@@ -7,11 +7,10 @@ import {
   StyleSheet,
   RefreshControl,
   ActivityIndicator,
-  Platform,
   TextInput,
-  KeyboardAvoidingView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
@@ -28,7 +27,7 @@ import {
   Activity,
   Smartphone,
 } from 'lucide-react-native';
-import { CompetitionType, getCompetitionTypeConfig } from '@/constants/competition';
+import { CompetitionType, formatScore, getCompetitionTypeConfig } from '@/constants/competition';
 
 interface LeaderboardEntry {
   user_id: string;
@@ -160,9 +159,15 @@ export default function CompetitionDetailScreen() {
         })
       );
 
-      // Sort based on competition type
+      // Sort based on competition type. For ascending (lowest wins) competitions
+      // we push participants who haven't logged anything yet to the bottom so a
+      // 0-score doesn't masquerade as the winner.
       if (typeConfig.sortOrder === 'asc') {
-        entries.sort((a, b) => a.score - b.score);
+        entries.sort((a, b) => {
+          if (a.score === 0 && b.score !== 0) return 1;
+          if (b.score === 0 && a.score !== 0) return -1;
+          return a.score - b.score;
+        });
       } else {
         entries.sort((a, b) => b.score - a.score);
       }
@@ -191,7 +196,7 @@ export default function CompetitionDetailScreen() {
     const today = new Date().toISOString().split('T')[0];
 
     let valueToLog: number | null = null;
-    let scoreAmount = 1;
+    let scoreAmount: number = 1;
 
     if (compType === 'running') {
       const km = parseFloat(logValue);
@@ -201,7 +206,7 @@ export default function CompetitionDetailScreen() {
         return;
       }
       valueToLog = km;
-      scoreAmount = Math.round(km);
+      scoreAmount = km;
     } else if (compType === 'screen_time') {
       const hrs = parseFloat(logValue);
       if (!logValue || isNaN(hrs) || hrs < 0) {
@@ -210,7 +215,7 @@ export default function CompetitionDetailScreen() {
         return;
       }
       valueToLog = hrs;
-      scoreAmount = 1;
+      scoreAmount = hrs;
     }
 
     const { data: existingLog } = await supabase
@@ -221,12 +226,14 @@ export default function CompetitionDetailScreen() {
       .eq('date_logged', today)
       .maybeSingle();
 
+    if (existingLog?.completed) {
+      setCheckedInToday(true);
+      setCheckingIn(false);
+      showToast('Already logged today', 'info');
+      return;
+    }
+
     if (existingLog) {
-      if (existingLog.completed) {
-        setCheckedInToday(true);
-        setCheckingIn(false);
-        return;
-      }
       const { error } = await supabase
         .from('daily_logs')
         .update({ completed: true, value: valueToLog })
@@ -260,9 +267,10 @@ export default function CompetitionDetailScreen() {
     });
 
     if (scoreError) {
+      const currentScore = leaderboard.find((e) => e.isCurrentUser)?.score ?? 0;
       const { error: updateError } = await supabase
         .from('participants')
-        .update({ score: leaderboard.find((e) => e.isCurrentUser)!?.score + scoreAmount })
+        .update({ score: currentScore + scoreAmount })
         .eq('competition_id', id)
         .eq('user_id', user.id);
 
@@ -312,10 +320,8 @@ export default function CompetitionDetailScreen() {
   const handleCopyCode = async () => {
     if (!competition?.join_code) return;
     try {
-      if (Platform.OS === 'web') {
-        await navigator.clipboard.writeText(competition.join_code);
-        showToast('Join code copied!', 'success');
-      }
+      await Clipboard.setStringAsync(competition.join_code);
+      showToast('Join code copied!', 'success');
     } catch {
       showToast('Could not copy code', 'error');
     }
@@ -336,25 +342,23 @@ export default function CompetitionDetailScreen() {
   const active = isCompetitionActive();
   const maxScore = Math.max(...leaderboard.map((e) => e.score), 1);
 
-  const getScoreDisplay = (entry: LeaderboardEntry) => {
-    if (compType === 'reading') {
-      return `${entry.score} ${entry.score === 1 ? 'day' : 'days'}`;
-    }
-    if (compType === 'running') {
-      return `${entry.score} km`;
-    }
-    if (compType === 'screen_time') {
-      const hrs = entry.score;
-      return `${hrs} hr${hrs !== 1 ? 's' : ''}`;
-    }
-    return `${entry.score}`;
-  };
+  const getScoreDisplay = (entry: LeaderboardEntry) => formatScore(compType, entry.score);
 
   const renderLeaderboardItem = ({ item, index }: { item: LeaderboardEntry; index: number }) => {
     const rank = index + 1;
     const medalColor = rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : rank === 3 ? '#CD7F32' : null;
     const hasFlame = item.streak > 1;
-    const barWidth = maxScore > 0 ? (item.score / maxScore) * 100 : 0;
+    // For "lowest wins" competitions (screen_time) invert the bar so the
+    // leader visually has the fullest fill. Participants with no logs yet
+    // (score === 0) have an empty bar in either direction.
+    let barWidth = 0;
+    if (item.score > 0 && maxScore > 0) {
+      if (typeConfig.sortOrder === 'asc') {
+        barWidth = ((maxScore - item.score) / maxScore) * 100;
+      } else {
+        barWidth = (item.score / maxScore) * 100;
+      }
+    }
 
     return (
       <View style={[styles.leaderboardRow, item.isCurrentUser && styles.currentUserRow]}>

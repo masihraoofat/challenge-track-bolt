@@ -51,3 +51,22 @@ export const COMPETITION_TYPES: Record<CompetitionType, {
 export function getCompetitionTypeConfig(type: string) {
   return COMPETITION_TYPES[(type as CompetitionType) || 'reading'] || COMPETITION_TYPES.reading;
 }
+
+function trimZeros(n: number, maxDecimals: number): string {
+  if (Number.isInteger(n)) return n.toString();
+  return parseFloat(n.toFixed(maxDecimals)).toString();
+}
+
+export function formatScore(type: CompetitionType, score: number): string {
+  const safe = Number.isFinite(score) ? score : 0;
+  if (type === 'reading') {
+    const n = Math.round(safe);
+    return `${n} ${n === 1 ? 'day' : 'days'}`;
+  }
+  if (type === 'running') {
+    return `${trimZeros(safe, 1)} km`;
+  }
+  const hrs = trimZeros(safe, 1);
+  const isOne = parseFloat(hrs) === 1;
+  return `${hrs} hr${isOne ? '' : 's'}`;
+}

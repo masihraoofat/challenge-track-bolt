@@ -8,20 +8,25 @@ import { supabase } from '@/lib/supabase';
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
-  const [stats, setStats] = useState({ competitions: 0, totalScore: 0, currentStreak: 0 });
+  const [stats, setStats] = useState({ competitions: 0, daysLogged: 0, currentStreak: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchStats() {
       if (!user) return;
 
-      const { data: participations } = await supabase
+      const { count: compCount } = await supabase
         .from('participants')
-        .select('score')
+        .select('competition_id', { count: 'exact', head: true })
         .eq('user_id', user.id);
 
-      const compCount = participations?.length || 0;
-      const totalScore = participations?.reduce((sum: number, p: any) => sum + p.score, 0) || 0;
+      // Days Logged is more honest than summing scores across different
+      // competition types (reading days + km + hours all in one bucket).
+      const { count: daysLogged } = await supabase
+        .from('daily_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('completed', true);
 
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -40,11 +45,11 @@ export default function ProfileScreen() {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const checkDate = new Date(today);
+        const loggedDates = new Set(recentLogs.map((l: any) => l.date_logged));
 
         for (let i = 0; i < 7; i++) {
           const dateStr2 = checkDate.toISOString().split('T')[0];
-          const found = recentLogs.some((log: any) => log.date_logged === dateStr2);
-          if (found) {
+          if (loggedDates.has(dateStr2)) {
             streak++;
           } else if (i > 0) {
             break;
@@ -53,7 +58,11 @@ export default function ProfileScreen() {
         }
       }
 
-      setStats({ competitions: compCount, totalScore, currentStreak: streak });
+      setStats({
+        competitions: compCount ?? 0,
+        daysLogged: daysLogged ?? 0,
+        currentStreak: streak,
+      });
       setLoading(false);
     }
     fetchStats();
@@ -91,8 +100,8 @@ export default function ProfileScreen() {
           </View>
           <View style={styles.statCard}>
             <Flame size={24} color={Colors.warm[500]} />
-            <Text style={styles.statValue}>{stats.totalScore}</Text>
-            <Text style={styles.statLabel}>Total Score</Text>
+            <Text style={styles.statValue}>{stats.daysLogged}</Text>
+            <Text style={styles.statLabel}>Days Logged</Text>
           </View>
           <View style={styles.statCard}>
             <Trophy size={24} color={Colors.success[500]} />

@@ -17,7 +17,7 @@ import { Lock, CircleCheck } from 'lucide-react-native';
 
 export default function UpdatePasswordScreen() {
   const router = useRouter();
-  const { updatePassword } = useAuth();
+  const { updatePassword, signOut } = useAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -64,7 +64,13 @@ export default function UpdatePasswordScreen() {
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.button} onPress={() => router.replace('/(auth)/login')}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={async () => {
+              await signOut();
+              router.replace('/(auth)/login');
+            }}
+          >
             <Text style={styles.buttonText}>Log In</Text>
           </TouchableOpacity>
         </View>

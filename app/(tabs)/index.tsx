@@ -18,7 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn, BookOpen, Activity, Smartphone } from 'lucide-react-native';
 import { showToast } from '@/components/Toast';
-import { CompetitionType, getCompetitionTypeConfig } from '@/constants/competition';
+import { CompetitionType, formatScore, getCompetitionTypeConfig } from '@/constants/competition';
 
 interface ParticipantInfo {
   user_id: string;
@@ -52,6 +52,7 @@ export default function HomeScreen() {
   const { user } = useAuth();
   const router = useRouter();
   const [competitions, setCompetitions] = useState<CompetitionWithParticipation[]>([]);
+  const [streaks, setStreaks] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [joinModalVisible, setJoinModalVisible] = useState(false);
@@ -75,6 +76,7 @@ export default function HomeScreen() {
     const compIds = data.map((p: any) => p.competition_id);
     if (compIds.length === 0) {
       setCompetitions([]);
+      setStreaks({});
       setLoading(false);
       setRefreshing(false);
       return;
@@ -88,9 +90,51 @@ export default function HomeScreen() {
 
     if (compError) {
       showToast('Failed to load competitions', 'error');
-    } else {
-      setCompetitions(compData || []);
+      setLoading(false);
+      setRefreshing(false);
+      return;
     }
+    setCompetitions(compData || []);
+
+    // Compute the current user's streak per competition from recent daily_logs.
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const { data: recentLogs } = await supabase
+      .from('daily_logs')
+      .select('competition_id, date_logged')
+      .eq('user_id', user.id)
+      .eq('completed', true)
+      .in('competition_id', compIds)
+      .gte('date_logged', thirtyDaysAgo.toISOString().split('T')[0]);
+
+    const byComp: Record<string, Set<string>> = {};
+    (recentLogs || []).forEach((log: any) => {
+      if (!byComp[log.competition_id]) byComp[log.competition_id] = new Set();
+      byComp[log.competition_id].add(log.date_logged);
+    });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const computed: Record<string, number> = {};
+    compIds.forEach((cid: string) => {
+      const days = byComp[cid];
+      let streak = 0;
+      if (days && days.size > 0) {
+        const checkDate = new Date(today);
+        for (let i = 0; i < 30; i++) {
+          const dateStr = checkDate.toISOString().split('T')[0];
+          if (days.has(dateStr)) {
+            streak++;
+          } else if (i > 0) {
+            break;
+          }
+          checkDate.setDate(checkDate.getDate() - 1);
+        }
+      }
+      computed[cid] = streak;
+    });
+    setStreaks(computed);
+
     setLoading(false);
     setRefreshing(false);
   }, [user]);
@@ -207,24 +251,37 @@ export default function HomeScreen() {
     const daysLeft = getDaysRemaining(item);
     const participantCount = item.participants?.length || 0;
     const myScore = getMyScore(item);
-    const streak = myScore;
+    const streak = streaks[item.id] ?? 0;
     const hasFlame = streak > 1;
 
+    const start = new Date(item.start_date + 'T00:00:00');
+    const end = new Date(item.end_date + 'T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const totalDays = Math.max(
       1,
-      Math.ceil(
-        (new Date(item.end_date + 'T00:00:00').getTime() -
-          new Date(item.start_date + 'T00:00:00').getTime()) /
-          (1000 * 60 * 60 * 24)
-      ) + 1
+      Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
     );
-    const progressPct = Math.min(100, (myScore / totalDays) * 100);
 
-    const getScoreDisplay = () => {
-      if (compType === 'reading') return `${myScore} day${myScore !== 1 ? 's' : ''}`;
-      if (compType === 'running') return `${myScore} km`;
-      return `${myScore} hr${myScore !== 1 ? 's' : ''}`;
-    };
+    // Progress bar:
+    //   - Reading: how many of the total days have been logged (score == days).
+    //   - Running / screen_time: how far through the competition window we are
+    //     in real time. Score isn't directly comparable to a day count.
+    let progressPct: number;
+    if (compType === 'reading') {
+      progressPct = Math.min(100, (myScore / totalDays) * 100);
+    } else {
+      const elapsed = Math.max(
+        0,
+        Math.min(
+          totalDays,
+          Math.floor((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
+        )
+      );
+      progressPct = Math.min(100, (elapsed / totalDays) * 100);
+    }
+
+    const scoreDisplay = formatScore(compType, myScore);
 
     return (
       <TouchableOpacity
@@ -276,7 +333,7 @@ export default function HomeScreen() {
                   <Text style={styles.flameText}>{streak} day streak</Text>
                 </View>
               )}
-              <Text style={[styles.scoreNumber, { color: colorSet[600] }]}>{getScoreDisplay()}</Text>
+              <Text style={[styles.scoreNumber, { color: colorSet[600] }]}>{scoreDisplay}</Text>
             </View>
           </View>
           <View style={styles.progressBarBg}>
