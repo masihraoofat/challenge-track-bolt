@@ -1,13 +1,16 @@
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { showToast } from '@/components/Toast';
 import { User, LogOut, BookOpen, Trophy, Flame } from 'lucide-react-native';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { computeStreakFromDates } from '@/constants/competition';
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
+  const insets = useSafeAreaInsets();
   const [stats, setStats] = useState({ competitions: 0, daysLogged: 0, currentStreak: 0 });
   const [loading, setLoading] = useState(true);
 
@@ -15,52 +18,35 @@ export default function ProfileScreen() {
     async function fetchStats() {
       if (!user) return;
 
-      const { count: compCount } = await supabase
-        .from('participants')
-        .select('competition_id', { count: 'exact', head: true })
-        .eq('user_id', user.id);
-
-      // Days Logged is more honest than summing scores across different
-      // competition types (reading days + km + hours all in one bucket).
-      const { count: daysLogged } = await supabase
-        .from('daily_logs')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('completed', true);
-
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       const dateStr = sevenDaysAgo.toISOString().split('T')[0];
 
-      const { data: recentLogs } = await supabase
-        .from('daily_logs')
-        .select('date_logged')
-        .eq('user_id', user.id)
-        .eq('completed', true)
-        .gte('date_logged', dateStr)
-        .order('date_logged', { ascending: false });
+      const [compResult, daysResult, logsResult] = await Promise.all([
+        supabase
+          .from('participants')
+          .select('competition_id', { count: 'exact', head: true })
+          .eq('user_id', user.id),
+        supabase
+          .from('daily_logs')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .eq('completed', true),
+        supabase
+          .from('daily_logs')
+          .select('date_logged')
+          .eq('user_id', user.id)
+          .eq('completed', true)
+          .gte('date_logged', dateStr)
+          .order('date_logged', { ascending: false }),
+      ]);
 
-      let streak = 0;
-      if (recentLogs && recentLogs.length > 0) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const checkDate = new Date(today);
-        const loggedDates = new Set(recentLogs.map((l: any) => l.date_logged));
-
-        for (let i = 0; i < 7; i++) {
-          const dateStr2 = checkDate.toISOString().split('T')[0];
-          if (loggedDates.has(dateStr2)) {
-            streak++;
-          } else if (i > 0) {
-            break;
-          }
-          checkDate.setDate(checkDate.getDate() - 1);
-        }
-      }
+      const loggedDates = new Set((logsResult.data || []).map((l) => l.date_logged));
+      const streak = computeStreakFromDates(loggedDates, 7);
 
       setStats({
-        competitions: compCount ?? 0,
-        daysLogged: daysLogged ?? 0,
+        competitions: compResult.count ?? 0,
+        daysLogged: daysResult.count ?? 0,
         currentStreak: streak,
       });
       setLoading(false);
@@ -77,7 +63,7 @@ export default function ProfileScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
         <Text style={styles.headerTitle}>Profile</Text>
       </View>
 

@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 
 type ToastType = 'success' | 'error' | 'info';
@@ -19,6 +20,7 @@ export function showToast(message: string, type: ToastType = 'success') {
 }
 
 export function ToastContainer() {
+  const insets = useSafeAreaInsets();
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = useCallback((message: string, type: ToastType) => {
@@ -36,7 +38,12 @@ export function ToastContainer() {
     });
   }, []);
 
-  addToastFn = addToast;
+  useEffect(() => {
+    addToastFn = addToast;
+    return () => {
+      addToastFn = null;
+    };
+  }, [addToast]);
 
   const getBgColor = (type: ToastType) => {
     switch (type) {
@@ -47,7 +54,7 @@ export function ToastContainer() {
   };
 
   return (
-    <View style={styles.container} pointerEvents="none">
+    <View style={[styles.container, { top: insets.top + Spacing.md }]} pointerEvents="none">
       {toasts.map((toast) => (
         <Animated.View
           key={toast.id}
@@ -63,7 +70,6 @@ export function ToastContainer() {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 60,
     left: 0,
     right: 0,
     alignItems: 'center',

@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { BookOpen, User } from 'lucide-react-native';
+import { BookOpen, User, Plus } from 'lucide-react-native';
 import { Colors, FontSizes } from '@/constants/theme';
 
 export default function TabLayout() {
@@ -37,7 +37,7 @@ export default function TabLayout() {
         options={{
           title: 'Create',
           tabBarIcon: ({ size, color }) => (
-            <BookOpen size={size} color={color} />
+            <Plus size={size} color={color} />
           ),
           href: null,
         }}

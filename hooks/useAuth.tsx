@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
+import * as Linking from 'expo-linking';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
@@ -45,6 +47,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
       if (event === 'PASSWORD_RECOVERY') {
         setIsRecovery(true);
+      } else {
+        setIsRecovery(false);
       }
     });
 
@@ -76,9 +80,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetPassword = async (email: string) => {
-    const redirectTo = typeof window !== 'undefined'
+    const redirectTo = Platform.OS === 'web'
       ? `${window.location.origin}/update-password`
-      : undefined;
+      : Linking.createURL('/update-password');
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo,
     });

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,46 +11,83 @@ import {
   ScrollView,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { showToast } from '@/components/Toast';
-import { ArrowLeft, BookOpen, Copy, Activity, Smartphone } from 'lucide-react-native';
+import { ArrowLeft, BookOpen, Copy, Activity, Smartphone, Sparkles } from 'lucide-react-native';
 import DatePicker from '@/components/DatePicker';
-import { CompetitionType, COMPETITION_TYPES } from '@/constants/competition';
+import {
+  CompetitionPreset,
+  COMPETITION_PRESETS,
+  SCORING_MODES,
+  ScoringMode,
+  getCompetitionConfig,
+} from '@/constants/competition';
 
-const TYPE_ICONS: Record<string, React.ReactNode> = {
+const PRESET_ICONS: Record<CompetitionPreset, React.ReactNode> = {
   reading: <BookOpen size={24} color={Colors.primary[600]} />,
   running: <Activity size={24} color={Colors.blue[600]} />,
   screen_time: <Smartphone size={24} color={Colors.teal[600]} />,
+  custom: <Sparkles size={24} color={Colors.primary[600]} />,
 };
+
+const PRESET_ORDER: CompetitionPreset[] = ['reading', 'running', 'screen_time', 'custom'];
 
 export default function CreateCompetitionScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const createdCodeRef = useRef<string | null>(null);
   const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [compType, setCompType] = useState<CompetitionType>('reading');
+  const [preset, setPreset] = useState<CompetitionPreset>('reading');
+  const [scoringMode, setScoringMode] = useState<ScoringMode>('daily');
+  const [unitLabel, setUnitLabel] = useState('');
   const [loading, setLoading] = useState(false);
   const [createdCode, setCreatedCode] = useState<string | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
-  const typeConfig = COMPETITION_TYPES[compType];
+  const maxEndDate = new Date();
+  maxEndDate.setFullYear(maxEndDate.getFullYear() + 1);
+  const maxEndDateStr = maxEndDate.toISOString().split('T')[0];
 
-  // The create screen is a hidden tab route that stays mounted, so without
-  // this reset the success screen (or any half-filled form) lingers between
-  // visits and the FAB appears to be "stuck" on the previous flow.
+  useEffect(() => {
+    createdCodeRef.current = createdCode;
+  }, [createdCode]);
+  const presetConfig = COMPETITION_PRESETS[preset];
+  const previewConfig = getCompetitionConfig({
+    competition_type: preset,
+    scoring_mode: scoringMode,
+    unit_label: unitLabel.trim() || presetConfig.defaultUnitLabel,
+    description: description.trim() || null,
+  });
+
+  const applyPreset = (p: CompetitionPreset) => {
+    const cfg = COMPETITION_PRESETS[p];
+    setPreset(p);
+    setScoringMode(cfg.defaultScoringMode);
+    setUnitLabel(cfg.defaultUnitLabel || '');
+  };
+
   useFocusEffect(
     useCallback(() => {
       return () => {
-        setTitle('');
-        setStartDate('');
-        setEndDate('');
-        setCompType('reading');
-        setCreatedCode(null);
-        setLoading(false);
+        if (createdCodeRef.current !== null) {
+          setTitle('');
+          setDescription('');
+          setStartDate('');
+          setEndDate('');
+          setPreset('reading');
+          setScoringMode('daily');
+          setUnitLabel('');
+          setCreatedCode(null);
+          setLoading(false);
+        }
       };
     }, [])
   );
@@ -68,9 +105,18 @@ export default function CreateCompetitionScreen() {
       showToast('End date must be after start date', 'error');
       return;
     }
+    if (SCORING_MODES[scoringMode].requiresUnit && !unitLabel.trim()) {
+      showToast('Please enter a unit label for this scoring mode', 'error');
+      return;
+    }
     if (!user) return;
 
     setLoading(true);
+
+    const resolvedUnit =
+      scoringMode === 'daily'
+        ? null
+        : unitLabel.trim() || presetConfig.defaultUnitLabel || null;
 
     const { data: competition, error: compError } = await supabase
       .from('competitions')
@@ -79,7 +125,10 @@ export default function CreateCompetitionScreen() {
         start_date: startDate,
         end_date: endDate,
         creator_id: user.id,
-        competition_type: compType,
+        competition_type: preset,
+        scoring_mode: scoringMode,
+        unit_label: resolvedUnit,
+        description: description.trim() || null,
       })
       .select()
       .single();
@@ -105,7 +154,12 @@ export default function CreateCompetitionScreen() {
     await supabase.from('analytics_events').insert({
       user_id: user.id,
       event_type: 'competition_created',
-      event_data: { competition_id: competition.id, title: title.trim(), type: compType },
+      event_data: {
+        competition_id: competition.id,
+        title: title.trim(),
+        type: preset,
+        scoring_mode: scoringMode,
+      },
     });
 
     setLoading(false);
@@ -140,26 +194,29 @@ export default function CreateCompetitionScreen() {
         </View>
 
         <View style={styles.successContent}>
-          <View style={[styles.successIcon, { backgroundColor: typeConfig.colorSet[100] }]}>
-            {TYPE_ICONS[compType]}
+          <View style={[styles.successIcon, { backgroundColor: previewConfig.colorSet[100] }]}>
+            {PRESET_ICONS[preset]}
           </View>
           <Text style={styles.successTitle}>All set!</Text>
           <Text style={styles.successSubtitle}>
-            Share this code with friends so they can join your {typeConfig.label.toLowerCase()} challenge
+            Share this code with friends so they can join your {previewConfig.label.toLowerCase()} challenge
           </Text>
 
-          <View style={[styles.codeCard, { borderColor: typeConfig.colorSet[200] }]}>
+          <View style={[styles.codeCard, { borderColor: previewConfig.colorSet[200] }]}>
             <Text style={styles.codeLabel}>Join Code</Text>
-            <Text style={[styles.codeText, { color: typeConfig.colorSet[600] }]}>{createdCode}</Text>
+            <Text style={[styles.codeText, { color: previewConfig.colorSet[600] }]}>{createdCode}</Text>
           </View>
 
-          <TouchableOpacity style={[styles.shareButton, { backgroundColor: typeConfig.colorSet[500] }]} onPress={handleCopyCode}>
+          <TouchableOpacity
+            style={[styles.shareButton, { backgroundColor: previewConfig.colorSet[500] }]}
+            onPress={handleCopyCode}
+          >
             <Copy size={20} color="#FFFFFF" />
             <Text style={styles.shareButtonText}>Copy Code</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.doneButton} onPress={handleDone}>
-            <Text style={[styles.doneButtonText, { color: typeConfig.colorSet[600] }]}>Done</Text>
+            <Text style={[styles.doneButtonText, { color: previewConfig.colorSet[600] }]}>Done</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -172,7 +229,7 @@ export default function CreateCompetitionScreen() {
       style={styles.container}
     >
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <ArrowLeft size={24} color={Colors.text} />
           </TouchableOpacity>
@@ -181,34 +238,34 @@ export default function CreateCompetitionScreen() {
         </View>
 
         <View style={styles.iconSection}>
-          <View style={[styles.iconContainer, { backgroundColor: typeConfig.colorSet[100] }]}>
-            {TYPE_ICONS[compType]}
+          <View style={[styles.iconContainer, { backgroundColor: previewConfig.colorSet[100] }]}>
+            {PRESET_ICONS[preset]}
           </View>
           <Text style={styles.sectionTitle}>Create a Challenge</Text>
           <Text style={styles.sectionSubtitle}>
-            Set up a competition and invite friends to join
+            Pick a template, choose how scoring works, and invite friends
           </Text>
         </View>
 
         <View style={styles.form}>
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Challenge Type</Text>
-            <View style={styles.typeRow}>
-              {(Object.keys(COMPETITION_TYPES) as CompetitionType[]).map((t) => {
-                const cfg = COMPETITION_TYPES[t];
-                const selected = t === compType;
+            <Text style={styles.label}>Template</Text>
+            <View style={styles.presetGrid}>
+              {PRESET_ORDER.map((p) => {
+                const cfg = COMPETITION_PRESETS[p];
+                const selected = p === preset;
                 return (
                   <TouchableOpacity
-                    key={t}
+                    key={p}
                     style={[
-                      styles.typeChip,
+                      styles.presetChip,
                       selected && { backgroundColor: cfg.colorSet[100], borderColor: cfg.colorSet[500] },
                     ]}
-                    onPress={() => setCompType(t)}
+                    onPress={() => applyPreset(p)}
                     activeOpacity={0.7}
                   >
                     <View style={[styles.typeIcon, selected && { backgroundColor: cfg.colorSet[200] }]}>
-                      {TYPE_ICONS[t]}
+                      {PRESET_ICONS[p]}
                     </View>
                     <Text style={[styles.typeLabel, selected && { color: cfg.colorSet[700] }]}>
                       {cfg.label}
@@ -220,16 +277,71 @@ export default function CreateCompetitionScreen() {
           </View>
 
           <View style={styles.inputGroup}>
+            <Text style={styles.label}>Scoring Mode</Text>
+            {(Object.keys(SCORING_MODES) as ScoringMode[]).map((mode) => {
+              const cfg = SCORING_MODES[mode];
+              const selected = mode === scoringMode;
+              return (
+                <TouchableOpacity
+                  key={mode}
+                  style={[
+                    styles.modeCard,
+                    selected && {
+                      backgroundColor: previewConfig.colorSet[50],
+                      borderColor: previewConfig.colorSet[500],
+                    },
+                  ]}
+                  onPress={() => setScoringMode(mode)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.modeLabel, selected && { color: previewConfig.colorSet[700] }]}>
+                    {cfg.label}
+                  </Text>
+                  <Text style={styles.modeSubtitle}>{cfg.subtitle}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {SCORING_MODES[scoringMode].requiresUnit && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Unit Label</Text>
+              <TextInput
+                style={styles.input}
+                value={unitLabel}
+                onChangeText={setUnitLabel}
+                placeholder="e.g. pages, glasses, pushups"
+                placeholderTextColor={Colors.neutral[400]}
+                maxLength={20}
+              />
+              <Text style={styles.hint}>Shown when logging and on the leaderboard</Text>
+            </View>
+          )}
+
+          <View style={styles.inputGroup}>
             <Text style={styles.label}>Competition Title</Text>
             <TextInput
               style={styles.input}
               value={title}
               onChangeText={setTitle}
-              placeholder={typeConfig.placeholder}
+              placeholder={presetConfig.placeholder}
               placeholderTextColor={Colors.neutral[400]}
               maxLength={60}
             />
-            <Text style={styles.hint}>{typeConfig.description}</Text>
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Description (optional)</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="What are the rules or goals for this challenge?"
+              placeholderTextColor={Colors.neutral[400]}
+              multiline
+              numberOfLines={3}
+              maxLength={200}
+            />
           </View>
 
           <View style={styles.dateRow}>
@@ -247,12 +359,17 @@ export default function CreateCompetitionScreen() {
                 value={endDate}
                 onChange={setEndDate}
                 minDate={startDate || today}
+                maxDate={maxEndDateStr}
               />
             </View>
           </View>
 
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled, { backgroundColor: typeConfig.colorSet[500] }]}
+            style={[
+              styles.button,
+              loading && styles.buttonDisabled,
+              { backgroundColor: previewConfig.colorSet[500] },
+            ]}
             onPress={handleCreate}
             disabled={loading}
           >
@@ -275,6 +392,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingBottom: Spacing.xxl,
   },
   header: {
     flexDirection: 'row',
@@ -343,16 +461,21 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.md,
     color: Colors.text,
   },
+  textArea: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
   hint: {
     fontSize: FontSizes.xs,
     color: Colors.neutral[400],
   },
-  typeRow: {
+  presetGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: Spacing.sm,
   },
-  typeChip: {
-    flex: 1,
+  presetChip: {
+    width: '48%',
     alignItems: 'center',
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.sm,
@@ -374,6 +497,25 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     fontWeight: '600',
     color: Colors.neutral[500],
+  },
+  modeCard: {
+    backgroundColor: Colors.surface,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    gap: 2,
+  },
+  modeLabel: {
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  modeSubtitle: {
+    fontSize: FontSizes.xs,
+    color: Colors.neutral[500],
+    lineHeight: 16,
   },
   dateRow: {
     flexDirection: 'row',

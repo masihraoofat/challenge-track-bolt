@@ -7,6 +7,7 @@ interface DatePickerProps {
   value: string;
   onChange: (date: string) => void;
   minDate?: string;
+  maxDate?: string;
   label: string;
 }
 
@@ -20,7 +21,7 @@ function toISO(year: number, month: number, day: number): string {
   return `${year}-${pad(month + 1)}-${pad(day)}`;
 }
 
-export default function DatePicker({ value, onChange, minDate, label }: DatePickerProps) {
+export default function DatePicker({ value, onChange, minDate, maxDate, label }: DatePickerProps) {
   const initial = value ? new Date(value + 'T00:00:00') : new Date();
   const [viewMonth, setViewMonth] = useState(initial.getMonth());
   const [viewYear, setViewYear] = useState(initial.getFullYear());
@@ -52,6 +53,7 @@ export default function DatePicker({ value, onChange, minDate, label }: DatePick
   const selectDay = (day: number) => {
     const iso = toISO(viewYear, viewMonth, day);
     if (minDate && iso < minDate) return;
+    if (maxDate && iso > maxDate) return;
     onChange(iso);
     setOpen(false);
   };
@@ -105,7 +107,9 @@ export default function DatePicker({ value, onChange, minDate, label }: DatePick
               }
               const iso = toISO(viewYear, viewMonth, day);
               const isSelected = iso === selected;
-              const isDisabled = minDate ? iso < minDate : false;
+              const isDisabled =
+                (minDate ? iso < minDate : false) ||
+                (maxDate ? iso > maxDate : false);
               const isToday = iso === new Date().toISOString().split('T')[0];
 
               return (
