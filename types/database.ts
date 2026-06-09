@@ -139,6 +139,29 @@ export interface Database {
           created_at?: string;
         };
       };
+      goals: {
+        Row: {
+          id: string;
+          user_id: string;
+          name: string;
+          goal_type: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          name: string;
+          goal_type?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          name?: string;
+          goal_type?: string;
+          created_at?: string;
+        };
+      };
     };
     Functions: {
       increment_score: {
