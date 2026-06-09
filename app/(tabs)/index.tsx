@@ -11,14 +11,23 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
-import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn, BookOpen, Activity, Smartphone } from 'lucide-react-native';
+import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn, BookOpen, Activity, Smartphone, Sparkles } from 'lucide-react-native';
 import { showToast } from '@/components/Toast';
-import { CompetitionType, formatScore, getCompetitionTypeConfig } from '@/constants/competition';
+import {
+  CompetitionPreset,
+  computeStreakFromDates,
+  formatLeaderboardScore,
+  getCompetitionConfig,
+  resolveCompetitionScore,
+  toScoreNumber,
+} from '@/constants/competition';
 
 interface ParticipantInfo {
   user_id: string;
@@ -33,24 +42,30 @@ interface CompetitionWithParticipation {
   creator_id: string;
   join_code: string;
   competition_type: string;
+  scoring_mode?: string;
+  unit_label?: string | null;
+  description?: string | null;
   participants: ParticipantInfo[];
 }
 
-const TYPE_ICONS: Record<string, React.ReactNode> = {
+const PRESET_ICONS: Record<CompetitionPreset, React.ReactNode> = {
   reading: <BookOpen size={20} color={Colors.primary[500]} />,
   running: <Activity size={20} color={Colors.blue[500]} />,
   screen_time: <Smartphone size={20} color={Colors.teal[500]} />,
+  custom: <Sparkles size={20} color={Colors.primary[500]} />,
 };
 
-const TYPE_ICONS_SMALL: Record<string, React.ReactNode> = {
+const PRESET_ICONS_SMALL: Record<CompetitionPreset, React.ReactNode> = {
   reading: <BookOpen size={14} color={Colors.primary[600]} />,
   running: <Activity size={14} color={Colors.blue[600]} />,
   screen_time: <Smartphone size={14} color={Colors.teal[600]} />,
+  custom: <Sparkles size={14} color={Colors.primary[600]} />,
 };
 
 export default function HomeScreen() {
   const { user } = useAuth();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [competitions, setCompetitions] = useState<CompetitionWithParticipation[]>([]);
   const [streaks, setStreaks] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -58,83 +73,98 @@ export default function HomeScreen() {
   const [joinModalVisible, setJoinModalVisible] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joining, setJoining] = useState(false);
+  const [myScores, setMyScores] = useState<
+    Record<string, { score: number; hasLogged: boolean }>
+  >({});
 
   const fetchCompetitions = useCallback(async () => {
     if (!user) return;
-    const { data, error } = await supabase
+
+    const { data: memberships, error: memberError } = await supabase
       .from('participants')
-      .select('competition_id, competitions!inner(*)')
+      .select('competition_id')
       .eq('user_id', user.id);
 
-    if (error) {
+    if (memberError) {
       showToast('Failed to load competitions', 'error');
       setLoading(false);
       setRefreshing(false);
       return;
     }
 
-    const compIds = data.map((p: any) => p.competition_id);
+    const compIds = (memberships || []).map((p) => p.competition_id);
     if (compIds.length === 0) {
       setCompetitions([]);
       setStreaks({});
+      setMyScores({});
       setLoading(false);
       setRefreshing(false);
       return;
     }
 
-    const { data: compData, error: compError } = await supabase
-      .from('competitions')
-      .select('*, participants(user_id, score)')
-      .in('id', compIds)
-      .order('created_at', { ascending: false });
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
 
-    if (compError) {
+    const [compResult, logsResult] = await Promise.all([
+      supabase
+        .from('competitions')
+        .select('*, participants(user_id, score)')
+        .in('id', compIds)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('daily_logs')
+        .select('competition_id, value, date_logged')
+        .eq('user_id', user.id)
+        .eq('completed', true)
+        .in('competition_id', compIds)
+        .gte('date_logged', thirtyDaysAgoStr),
+    ]);
+
+    if (compResult.error) {
       showToast('Failed to load competitions', 'error');
       setLoading(false);
       setRefreshing(false);
       return;
     }
-    setCompetitions(compData || []);
 
-    // Compute the current user's streak per competition from recent daily_logs.
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const { data: recentLogs } = await supabase
-      .from('daily_logs')
-      .select('competition_id, date_logged')
-      .eq('user_id', user.id)
-      .eq('completed', true)
-      .in('competition_id', compIds)
-      .gte('date_logged', thirtyDaysAgo.toISOString().split('T')[0]);
+    const compData = compResult.data || [];
+    setCompetitions(compData);
 
+    const logTotalsByComp: Record<string, { total: number; count: number }> = {};
     const byComp: Record<string, Set<string>> = {};
-    (recentLogs || []).forEach((log: any) => {
-      if (!byComp[log.competition_id]) byComp[log.competition_id] = new Set();
+
+    (logsResult.data || []).forEach((log) => {
+      if (!logTotalsByComp[log.competition_id]) {
+        logTotalsByComp[log.competition_id] = { total: 0, count: 0 };
+      }
+      logTotalsByComp[log.competition_id].count += 1;
+      logTotalsByComp[log.competition_id].total += toScoreNumber(log.value);
+
+      if (!byComp[log.competition_id]) {
+        byComp[log.competition_id] = new Set();
+      }
       byComp[log.competition_id].add(log.date_logged);
     });
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const scoreMap: Record<string, { score: number; hasLogged: boolean }> = {};
     const computed: Record<string, number> = {};
-    compIds.forEach((cid: string) => {
-      const days = byComp[cid];
-      let streak = 0;
-      if (days && days.size > 0) {
-        const checkDate = new Date(today);
-        for (let i = 0; i < 30; i++) {
-          const dateStr = checkDate.toISOString().split('T')[0];
-          if (days.has(dateStr)) {
-            streak++;
-          } else if (i > 0) {
-            break;
-          }
-          checkDate.setDate(checkDate.getDate() - 1);
-        }
-      }
-      computed[cid] = streak;
-    });
-    setStreaks(computed);
 
+    compData.forEach((comp: any) => {
+      const config = getCompetitionConfig(comp);
+      const me = comp.participants?.find((p: any) => p.user_id === user.id);
+      const logInfo = logTotalsByComp[comp.id] ?? { total: 0, count: 0 };
+      scoreMap[comp.id] = resolveCompetitionScore(
+        config,
+        me?.score,
+        logInfo.total,
+        logInfo.count,
+      );
+      computed[comp.id] = computeStreakFromDates(byComp[comp.id] ?? new Set());
+    });
+
+    setMyScores(scoreMap);
+    setStreaks(computed);
     setLoading(false);
     setRefreshing(false);
   }, [user]);
@@ -229,10 +259,14 @@ export default function HomeScreen() {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  const getMyScore = (comp: CompetitionWithParticipation) => {
-    if (!user) return 0;
-    const me = comp.participants?.find((p) => p.user_id === user.id);
-    return me?.score || 0;
+  const getMyScoreDisplay = (comp: CompetitionWithParticipation) => {
+    const config = getCompetitionConfig(comp);
+    const resolved = myScores[comp.id];
+    if (resolved) {
+      return formatLeaderboardScore(config, resolved.score, resolved.hasLogged);
+    }
+    const me = comp.participants?.find((p) => p.user_id === user?.id);
+    return formatLeaderboardScore(config, toScoreNumber(me?.score), false);
   };
 
   if (loading) {
@@ -244,13 +278,13 @@ export default function HomeScreen() {
   }
 
   const renderCompetition = ({ item }: { item: CompetitionWithParticipation }) => {
-    const compType = (item.competition_type || 'reading') as CompetitionType;
-    const typeConfig = getCompetitionTypeConfig(compType);
-    const colorSet = typeConfig.colorSet;
+    const config = getCompetitionConfig(item);
+    const colorSet = config.colorSet;
     const active = isCompetitionActive(item);
     const daysLeft = getDaysRemaining(item);
     const participantCount = item.participants?.length || 0;
-    const myScore = getMyScore(item);
+    const resolvedScore = myScores[item.id];
+    const myScore = resolvedScore?.score ?? 0;
     const streak = streaks[item.id] ?? 0;
     const hasFlame = streak > 1;
 
@@ -263,12 +297,8 @@ export default function HomeScreen() {
       Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
     );
 
-    // Progress bar:
-    //   - Reading: how many of the total days have been logged (score == days).
-    //   - Running / screen_time: how far through the competition window we are
-    //     in real time. Score isn't directly comparable to a day count.
     let progressPct: number;
-    if (compType === 'reading') {
+    if (config.scoringMode === 'daily') {
       progressPct = Math.min(100, (myScore / totalDays) * 100);
     } else {
       const elapsed = Math.max(
@@ -281,7 +311,7 @@ export default function HomeScreen() {
       progressPct = Math.min(100, (elapsed / totalDays) * 100);
     }
 
-    const scoreDisplay = formatScore(compType, myScore);
+    const scoreDisplay = getMyScoreDisplay(item);
 
     return (
       <TouchableOpacity
@@ -292,8 +322,8 @@ export default function HomeScreen() {
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderLeft}>
             <View style={[styles.typeChipSmall, { backgroundColor: colorSet[100] }]}>
-              {TYPE_ICONS_SMALL[compType]}
-              <Text style={[styles.typeChipText, { color: colorSet[700] }]}>{typeConfig.label}</Text>
+              {PRESET_ICONS_SMALL[config.preset]}
+              <Text style={[styles.typeChipText, { color: colorSet[700] }]}>{config.label}</Text>
             </View>
             <View style={[styles.statusBadge, active ? styles.statusActive : styles.statusEnded]}>
               <Text style={[styles.statusText, active ? styles.statusTextActive : styles.statusTextEnded]}>
@@ -309,9 +339,14 @@ export default function HomeScreen() {
 
         <View style={styles.cardBody}>
           <View style={styles.iconRow}>
-            {TYPE_ICONS[compType]}
+            {PRESET_ICONS[config.preset]}
             <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
           </View>
+          {config.description ? (
+            <Text style={styles.cardDescription} numberOfLines={2}>
+              {config.description}
+            </Text>
+          ) : null}
           <View style={styles.dateRow}>
             <Calendar size={14} color={Colors.neutral[400]} />
             <Text style={styles.dateText}>
@@ -355,7 +390,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
         <View>
           <Text style={styles.greeting}>Your Competitions</Text>
           <Text style={styles.subGreeting}>Keep the streak going</Text>
@@ -375,6 +410,22 @@ export default function HomeScreen() {
           <Text style={styles.emptySubtitle}>
             Create your first competition or join one with a code!
           </Text>
+          <View style={styles.emptyActions}>
+            <TouchableOpacity
+              style={styles.emptyCreateButton}
+              onPress={() => router.push('/(tabs)/create')}
+            >
+              <Plus size={18} color="#FFFFFF" />
+              <Text style={styles.emptyCreateText}>Create</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.emptyJoinButton}
+              onPress={() => setJoinModalVisible(true)}
+            >
+              <LogIn size={18} color={Colors.primary[600]} />
+              <Text style={styles.emptyJoinText}>Join</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : (
         <FlatList
@@ -404,9 +455,13 @@ export default function HomeScreen() {
         onRequestClose={() => setJoinModalVisible(false)}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior="padding"
           style={styles.modalOverlay}
         >
+          <ScrollView
+            contentContainerStyle={styles.modalScrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Join a Competition</Text>
             <Text style={styles.modalSubtitle}>
@@ -447,6 +502,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
     </View>
@@ -580,6 +636,12 @@ const styles = StyleSheet.create({
     color: Colors.text,
     flex: 1,
   },
+  cardDescription: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+    marginTop: Spacing.xs,
+  },
   dateRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -617,7 +679,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    backgroundColor: '#FFF5E8',
+    backgroundColor: Colors.warm[100],
     paddingHorizontal: Spacing.sm,
     paddingVertical: 2,
     borderRadius: BorderRadius.full,
@@ -681,6 +743,39 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
   },
+  emptyActions: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginTop: Spacing.xl,
+  },
+  emptyCreateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.primary[500],
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.full,
+  },
+  emptyCreateText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  emptyJoinButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.primary[100],
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.full,
+  },
+  emptyJoinText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: Colors.primary[600],
+  },
   fab: {
     position: 'absolute',
     right: Spacing.lg,
@@ -701,6 +796,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  modalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: Colors.surface,

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,11 +17,12 @@ import { Lock, CircleCheck } from 'lucide-react-native';
 
 export default function UpdatePasswordScreen() {
   const router = useRouter();
-  const { updatePassword, signOut } = useAuth();
+  const { updatePassword, signOut, isRecovery, loading: authLoading } = useAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const confirmRef = useRef<TextInput>(null);
 
   const handleUpdate = async () => {
     if (!password || !confirmPassword) {
@@ -46,6 +47,33 @@ export default function UpdatePasswordScreen() {
     setSuccess(true);
     showToast('Password updated!', 'success');
   };
+
+  if (authLoading) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color={Colors.primary[500]} />
+      </View>
+    );
+  }
+
+  if (!isRecovery && !success) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.content}>
+          <Text style={styles.title}>Link expired</Text>
+          <Text style={styles.subtitle}>
+            This password reset link is no longer valid. Please request a new one.
+          </Text>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => router.replace('/(auth)/forgot-password')}
+          >
+            <Text style={styles.buttonText}>Request New Link</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   if (success) {
     return (
@@ -105,12 +133,15 @@ export default function UpdatePasswordScreen() {
               placeholderTextColor={Colors.neutral[400]}
               secureTextEntry
               autoCapitalize="none"
+              returnKeyType="next"
+              onSubmitEditing={() => confirmRef.current?.focus()}
             />
           </View>
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Confirm Password</Text>
             <TextInput
+              ref={confirmRef}
               style={styles.input}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
@@ -118,6 +149,8 @@ export default function UpdatePasswordScreen() {
               placeholderTextColor={Colors.neutral[400]}
               secureTextEntry
               autoCapitalize="none"
+              returnKeyType="done"
+              onSubmitEditing={handleUpdate}
             />
           </View>
 
@@ -142,6 +175,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  centered: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   content: {
     flex: 1,

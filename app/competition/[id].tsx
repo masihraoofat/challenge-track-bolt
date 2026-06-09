@@ -8,7 +8,10 @@ import {
   RefreshControl,
   ActivityIndicator,
   TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { supabase } from '@/lib/supabase';
@@ -26,8 +29,33 @@ import {
   BookOpen,
   Activity,
   Smartphone,
+  Sparkles,
 } from 'lucide-react-native';
-import { CompetitionType, formatScore, getCompetitionTypeConfig } from '@/constants/competition';
+import {
+  type CompetitionConfig,
+  type CompetitionRow,
+  CompetitionPreset,
+  computeStreakFromDates,
+  formatDuration,
+  formatLeaderboardScore,
+  formatUnitScore,
+  getCheckInLabel,
+  getCompetitionConfig,
+  getLeaderboardTitle,
+  getLogValueLabel,
+  parseScreenTimeLog,
+  resolveCompetitionScore,
+  SCORING_MODES,
+  toScoreNumber,
+} from '@/constants/competition';
+
+interface CompetitionDetail extends CompetitionRow {
+  id: string;
+  title: string;
+  start_date: string;
+  end_date: string;
+  join_code: string;
+}
 
 interface LeaderboardEntry {
   user_id: string;
@@ -36,26 +64,37 @@ interface LeaderboardEntry {
   isCurrentUser: boolean;
   streak: number;
   todayValue: number | null;
+  hasLogged: boolean;
 }
 
-const TYPE_ICONS: Record<string, React.ReactNode> = {
+const PRESET_ICONS: Record<CompetitionPreset, React.ReactNode> = {
   reading: <BookOpen size={16} color={Colors.primary[500]} />,
   running: <Activity size={16} color={Colors.blue[500]} />,
   screen_time: <Smartphone size={16} color={Colors.teal[500]} />,
+  custom: <Sparkles size={16} color={Colors.primary[500]} />,
 };
+
+function formatTodayValue(config: CompetitionConfig, value: number): string {
+  if (config.logInputType === 'duration') return formatDuration(value);
+  return formatUnitScore(value, config.unitLabel, config.logInputType);
+}
 
 export default function CompetitionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
-  const [competition, setCompetition] = useState<any>(null);
+  const [competition, setCompetition] = useState<CompetitionDetail | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [checkedInToday, setCheckedInToday] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
   const [logValue, setLogValue] = useState('');
+  const [logHours, setLogHours] = useState('');
+  const [logMinutes, setLogMinutes] = useState('');
+  const [todayLoggedValue, setTodayLoggedValue] = useState<number | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!id || !user) return;
@@ -74,8 +113,7 @@ export default function CompetitionDetailScreen() {
     }
     setCompetition(comp);
 
-    const compType = (comp.competition_type || 'reading') as CompetitionType;
-    const typeConfig = getCompetitionTypeConfig(compType);
+    const config = getCompetitionConfig(comp);
 
     const { data: participants, error: partError } = await supabase
       .from('participants')
@@ -101,78 +139,91 @@ export default function CompetitionDetailScreen() {
 
     if (participants) {
       const todayValues: Record<string, number | null> = {};
+      const logTotals: Record<string, number> = {};
+      const logCounts: Record<string, number> = {};
 
-      // Get today's values for all participants
-      if (compType !== 'reading') {
-        const { data: todayLogs } = await supabase
-          .from('daily_logs')
-          .select('user_id, value')
-          .eq('competition_id', id)
-          .eq('date_logged', today)
-          .eq('completed', true);
-        if (todayLogs) {
-          todayLogs.forEach((log: any) => {
-            todayValues[log.user_id] = log.value ?? null;
-          });
-        }
+      const { data: allLogs, error: logsError } = await supabase
+        .from('daily_logs')
+        .select('user_id, value, date_logged')
+        .eq('competition_id', id)
+        .eq('completed', true);
+
+      if (logsError) {
+        showToast('Failed to load daily logs', 'error');
       }
 
-      const entries: LeaderboardEntry[] = await Promise.all(
-        participants.map(async (p: any) => {
-          let streak = 0;
-          if (p.score > 0) {
-            const { data: recentLogs } = await supabase
-              .from('daily_logs')
-              .select('date_logged')
-              .eq('competition_id', id)
-              .eq('user_id', p.user_id)
-              .eq('completed', true)
-              .order('date_logged', { ascending: false })
-              .limit(30);
+      const datesByUser: Record<string, Set<string>> = {};
 
-            if (recentLogs && recentLogs.length > 0) {
-              const todayDate = new Date();
-              todayDate.setHours(0, 0, 0, 0);
-              const checkDate = new Date(todayDate);
-
-              for (let i = 0; i < 30; i++) {
-                const dateStr = checkDate.toISOString().split('T')[0];
-                const found = recentLogs.some((log: any) => log.date_logged === dateStr);
-                if (found) {
-                  streak++;
-                } else if (i > 0) {
-                  break;
-                }
-                checkDate.setDate(checkDate.getDate() - 1);
-              }
-            }
+      if (allLogs) {
+        allLogs.forEach((log: any) => {
+          logCounts[log.user_id] = (logCounts[log.user_id] || 0) + 1;
+          const val = toScoreNumber(log.value);
+          if (config.scoringMode !== 'daily') {
+            logTotals[log.user_id] = (logTotals[log.user_id] || 0) + val;
           }
+          if (log.date_logged === today) {
+            todayValues[log.user_id] = val;
+          }
+          if (!datesByUser[log.user_id]) {
+            datesByUser[log.user_id] = new Set();
+          }
+          datesByUser[log.user_id].add(log.date_logged);
+        });
+      }
 
-          return {
-            user_id: p.user_id,
-            score: p.score,
-            username: p.users?.username || 'Unknown',
-            isCurrentUser: p.user_id === user.id,
-            streak,
-            todayValue: todayValues[p.user_id] ?? null,
-          };
-        })
-      );
+      const entries: LeaderboardEntry[] = participants.map((p: any) => {
+        const { score: participantScore, hasLogged } = resolveCompetitionScore(
+          config,
+          p.score,
+          logTotals[p.user_id] ?? 0,
+          logCounts[p.user_id] ?? 0,
+        );
+        const streak = hasLogged
+          ? computeStreakFromDates(datesByUser[p.user_id] ?? new Set())
+          : 0;
+
+        return {
+          user_id: p.user_id,
+          score: participantScore,
+          username: p.users?.username || 'Unknown',
+          isCurrentUser: p.user_id === user.id,
+          streak,
+          todayValue: todayValues[p.user_id] ?? null,
+          hasLogged,
+        };
+      });
 
       // Sort based on competition type. For ascending (lowest wins) competitions
       // we push participants who haven't logged anything yet to the bottom so a
       // 0-score doesn't masquerade as the winner.
-      if (typeConfig.sortOrder === 'asc') {
+      if (config.sortOrder === 'asc') {
         entries.sort((a, b) => {
-          if (a.score === 0 && b.score !== 0) return 1;
-          if (b.score === 0 && a.score !== 0) return -1;
+          if (!a.hasLogged && b.hasLogged) return 1;
+          if (a.hasLogged && !b.hasLogged) return -1;
           return a.score - b.score;
         });
       } else {
-        entries.sort((a, b) => b.score - a.score);
+        entries.sort((a, b) => {
+          if (!a.hasLogged && b.hasLogged) return 1;
+          if (a.hasLogged && !b.hasLogged) return -1;
+          return b.score - a.score;
+        });
       }
 
       setLeaderboard(entries);
+
+      if (config.logInputType !== 'checkin') {
+        const todayVal = todayValues[user.id];
+        setTodayLoggedValue(
+          todayVal != null
+            ? todayVal
+            : checkedIn && todayLog?.value != null
+              ? toScoreNumber(todayLog.value)
+              : null
+        );
+      } else {
+        setTodayLoggedValue(null);
+      }
     }
 
     setLoading(false);
@@ -192,30 +243,30 @@ export default function CompetitionDetailScreen() {
     if (!user || !id || checkedInToday) return;
     setCheckingIn(true);
 
-    const compType = (competition?.competition_type || 'reading') as CompetitionType;
+    const config = getCompetitionConfig(competition);
     const today = new Date().toISOString().split('T')[0];
 
     let valueToLog: number | null = null;
     let scoreAmount: number = 1;
 
-    if (compType === 'running') {
-      const km = parseFloat(logValue);
-      if (!logValue || isNaN(km) || km <= 0) {
-        showToast('Please enter valid kilometers', 'error');
+    if (config.logInputType === 'number') {
+      const amount = parseFloat(logValue);
+      if (!logValue || isNaN(amount) || amount < 0) {
+        showToast(`Please enter a valid number of ${config.unitLabel || 'units'}`, 'error');
         setCheckingIn(false);
         return;
       }
-      valueToLog = km;
-      scoreAmount = km;
-    } else if (compType === 'screen_time') {
-      const hrs = parseFloat(logValue);
-      if (!logValue || isNaN(hrs) || hrs < 0) {
-        showToast('Please enter valid hours', 'error');
+      valueToLog = amount;
+      scoreAmount = amount;
+    } else if (config.logInputType === 'duration') {
+      const parsed = parseScreenTimeLog(logHours, logMinutes);
+      if ('error' in parsed) {
+        showToast(parsed.error, 'error');
         setCheckingIn(false);
         return;
       }
-      valueToLog = hrs;
-      scoreAmount = hrs;
+      valueToLog = parsed.decimalHours;
+      scoreAmount = parsed.decimalHours;
     }
 
     const { data: existingLog } = await supabase
@@ -260,25 +311,16 @@ export default function CompetitionDetailScreen() {
       }
     }
 
-    const { error: scoreError } = await supabase.rpc('increment_score', {
+    const { error: updateError } = await supabase.rpc('increment_score', {
       comp_id: id,
       uid: user.id,
       amount: scoreAmount,
     });
 
-    if (scoreError) {
-      const currentScore = leaderboard.find((e) => e.isCurrentUser)?.score ?? 0;
-      const { error: updateError } = await supabase
-        .from('participants')
-        .update({ score: currentScore + scoreAmount })
-        .eq('competition_id', id)
-        .eq('user_id', user.id);
-
-      if (updateError) {
-        showToast('Score update failed', 'error');
-        setCheckingIn(false);
-        return;
-      }
+    if (updateError) {
+      showToast('Score update failed', 'error');
+      setCheckingIn(false);
+      return;
     }
 
     await supabase.from('analytics_events').insert({
@@ -288,10 +330,12 @@ export default function CompetitionDetailScreen() {
     });
 
     setCheckedInToday(true);
+    setTodayLoggedValue(valueToLog);
     setCheckingIn(false);
     setLogValue('');
-    const typeConfig = getCompetitionTypeConfig(compType);
-    showToast(`${typeConfig.label} logged!`, 'success');
+    setLogHours('');
+    setLogMinutes('');
+    showToast('Progress logged!', 'success');
     fetchData();
   };
 
@@ -327,6 +371,14 @@ export default function CompetitionDetailScreen() {
     }
   };
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(tabs)');
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -335,14 +387,17 @@ export default function CompetitionDetailScreen() {
     );
   }
 
-  const compType = (competition?.competition_type || 'reading') as CompetitionType;
-  const typeConfig = getCompetitionTypeConfig(compType);
-  const colorSet = typeConfig.colorSet;
+  const config = getCompetitionConfig(competition);
+  const colorSet = config.colorSet;
   const daysLeft = getDaysRemaining();
   const active = isCompetitionActive();
-  const maxScore = Math.max(...leaderboard.map((e) => e.score), 1);
+  const maxScore = Math.max(
+    ...leaderboard.filter((e) => e.hasLogged).map((e) => e.score),
+    1
+  );
 
-  const getScoreDisplay = (entry: LeaderboardEntry) => formatScore(compType, entry.score);
+  const getScoreDisplay = (entry: LeaderboardEntry) =>
+    formatLeaderboardScore(config, entry.score, entry.hasLogged);
 
   const renderLeaderboardItem = ({ item, index }: { item: LeaderboardEntry; index: number }) => {
     const rank = index + 1;
@@ -352,8 +407,8 @@ export default function CompetitionDetailScreen() {
     // leader visually has the fullest fill. Participants with no logs yet
     // (score === 0) have an empty bar in either direction.
     let barWidth = 0;
-    if (item.score > 0 && maxScore > 0) {
-      if (typeConfig.sortOrder === 'asc') {
+    if (item.hasLogged && maxScore > 0) {
+      if (config.sortOrder === 'asc') {
         barWidth = ((maxScore - item.score) / maxScore) * 100;
       } else {
         barWidth = (item.score / maxScore) * 100;
@@ -387,27 +442,39 @@ export default function CompetitionDetailScreen() {
           </View>
         </View>
         <View style={styles.scoreContainer}>
-          {TYPE_ICONS[compType]}
-          <Text style={[styles.scoreText, { color: colorSet[600] }]}>{getScoreDisplay(item)}</Text>
+          {PRESET_ICONS[config.preset]}
+          <View style={styles.scoreTextGroup}>
+            <Text style={[styles.scoreText, { color: colorSet[600] }]}>{getScoreDisplay(item)}</Text>
+            {config.logInputType !== 'checkin' && item.todayValue != null && (
+              <Text style={styles.todayScoreText}>
+                Today: {formatTodayValue(config, item.todayValue)}
+              </Text>
+            )}
+          </View>
         </View>
       </View>
     );
   };
 
-  const getCheckInLabel = () => {
-    if (compType === 'reading') return "Log Today's Reading";
-    if (compType === 'running') return "Log Today's Running";
-    return "Log Today's Screen Time";
-  };
+  const checkInLabel = getCheckInLabel(config);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
+        <TouchableOpacity
+          onPress={handleBack}
+          style={styles.backButton}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <ArrowLeft size={24} color={Colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleRow}>
-          {TYPE_ICONS[compType]}
+          {PRESET_ICONS[config.preset]}
           <Text style={styles.headerTitle} numberOfLines={1}>{competition?.title}</Text>
         </View>
         <View style={{ width: 40 }} />
@@ -417,17 +484,26 @@ export default function CompetitionDetailScreen() {
         data={leaderboard}
         renderItem={renderLeaderboardItem}
         keyExtractor={(item) => item.user_id}
+        keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View style={styles.infoSection}>
             <View style={styles.competitionInfo}>
               <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
-                {TYPE_ICONS[compType]}
-                <Text style={[styles.infoChipText, { color: colorSet[700] }]}>{typeConfig.label}</Text>
+                {PRESET_ICONS[config.preset]}
+                <Text style={[styles.infoChipText, { color: colorSet[700] }]}>{config.label}</Text>
+              </View>
+              <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
+                <Trophy size={14} color={colorSet[600]} />
+                <Text style={[styles.infoChipText, { color: colorSet[700] }]}>
+                  {SCORING_MODES[config.scoringMode].label}
+                </Text>
               </View>
               <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
                 <Calendar size={14} color={colorSet[600]} />
                 <Text style={[styles.infoChipText, { color: colorSet[700] }]}>
-                  {formatDate(competition?.start_date)} - {formatDate(competition?.end_date)}
+                  {competition
+                    ? `${formatDate(competition.start_date)} - ${formatDate(competition.end_date)}`
+                    : ''}
                 </Text>
               </View>
               <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
@@ -444,13 +520,22 @@ export default function CompetitionDetailScreen() {
               )}
             </View>
 
+            {config.description ? (
+              <Text style={styles.descriptionText}>{config.description}</Text>
+            ) : null}
+
             {competition?.join_code && (
               <View style={styles.joinCodeSection}>
                 <View style={[styles.joinCodeCard, { borderColor: colorSet[200] }]}>
                   <Text style={styles.joinCodeLabel}>INVITE CODE</Text>
                   <Text style={[styles.joinCodeValue, { color: colorSet[600] }]}>{competition.join_code}</Text>
                 </View>
-                <TouchableOpacity style={[styles.copyCodeButton, { backgroundColor: colorSet[100] }]} onPress={handleCopyCode}>
+                <TouchableOpacity
+                  style={[styles.copyCodeButton, { backgroundColor: colorSet[100] }]}
+                  onPress={handleCopyCode}
+                  accessibilityRole="button"
+                  accessibilityLabel="Copy join code"
+                >
                   <Copy size={16} color={colorSet[600]} />
                   <Text style={[styles.copyCodeText, { color: colorSet[600] }]}>Copy</Text>
                 </TouchableOpacity>
@@ -459,22 +544,59 @@ export default function CompetitionDetailScreen() {
 
             {active && (
               <View style={styles.checkInSection}>
-                {compType !== 'reading' && !checkedInToday && (
+                {config.logInputType === 'number' && !checkedInToday && (
                   <View style={styles.valueInputGroup}>
-                    <Text style={styles.valueLabel}>
-                      {compType === 'running' ? 'Kilometers ran today' : 'Hours of screen time today'}
-                    </Text>
+                    <Text style={styles.valueLabel}>{getLogValueLabel(config)}</Text>
                     <TextInput
                       style={styles.valueInput}
                       value={logValue}
                       onChangeText={setLogValue}
-                      placeholder={compType === 'running' ? 'e.g. 5.2' : 'e.g. 2.5'}
+                      placeholder="e.g. 5"
                       placeholderTextColor={Colors.neutral[400]}
                       keyboardType="decimal-pad"
-                      maxLength={6}
+                      maxLength={8}
                     />
-                    <Text style={styles.valueUnit}>
-                      {compType === 'running' ? 'km' : 'hours'}
+                    {config.unitLabel ? (
+                      <Text style={styles.valueUnit}>{config.unitLabel}</Text>
+                    ) : null}
+                  </View>
+                )}
+                {config.logInputType === 'duration' && !checkedInToday && (
+                  <View style={styles.valueInputGroup}>
+                    <Text style={styles.valueLabel}>{getLogValueLabel(config)}</Text>
+                    <View style={styles.durationInputRow}>
+                      <View style={styles.durationField}>
+                        <TextInput
+                          style={styles.durationInput}
+                          value={logHours}
+                          onChangeText={setLogHours}
+                          placeholder="0"
+                          placeholderTextColor={Colors.neutral[400]}
+                          keyboardType="number-pad"
+                          maxLength={3}
+                        />
+                        <Text style={styles.durationUnit}>hr</Text>
+                      </View>
+                      <View style={styles.durationField}>
+                        <TextInput
+                          style={styles.durationInput}
+                          value={logMinutes}
+                          onChangeText={setLogMinutes}
+                          placeholder="0"
+                          placeholderTextColor={Colors.neutral[400]}
+                          keyboardType="number-pad"
+                          maxLength={2}
+                        />
+                        <Text style={styles.durationUnit}>min</Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+                {checkedInToday && config.logInputType !== 'checkin' && todayLoggedValue !== null && (
+                  <View style={[styles.loggedTodayCard, { backgroundColor: colorSet[50] }]}>
+                    <Text style={styles.loggedTodayLabel}>Logged today</Text>
+                    <Text style={[styles.loggedTodayValue, { color: colorSet[700] }]}>
+                      {formatTodayValue(config, todayLoggedValue)}
                     </Text>
                   </View>
                 )}
@@ -487,6 +609,8 @@ export default function CompetitionDetailScreen() {
                   onPress={handleCheckIn}
                   disabled={checkedInToday || checkingIn}
                   activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={checkedInToday ? 'Logged today' : checkInLabel}
                 >
                   {checkingIn ? (
                     <ActivityIndicator color="#FFFFFF" />
@@ -498,7 +622,7 @@ export default function CompetitionDetailScreen() {
                   ) : (
                     <>
                       <CheckCircle2 size={22} color="#FFFFFF" />
-                      <Text style={styles.checkInText}>{getCheckInLabel()}</Text>
+                      <Text style={styles.checkInText}>{checkInLabel}</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -507,9 +631,7 @@ export default function CompetitionDetailScreen() {
 
             <View style={styles.leaderboardHeader}>
               <Trophy size={20} color={Colors.warm[500]} />
-              <Text style={styles.leaderboardTitle}>
-                {compType === 'screen_time' ? 'Lowest Wins' : 'Leaderboard'}
-              </Text>
+              <Text style={styles.leaderboardTitle}>{getLeaderboardTitle(config)}</Text>
             </View>
           </View>
         }
@@ -519,7 +641,7 @@ export default function CompetitionDetailScreen() {
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -542,6 +664,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.xl,
     paddingBottom: Spacing.md,
     backgroundColor: Colors.background,
+    zIndex: 1,
   },
   backButton: {
     width: 40,
@@ -584,6 +707,12 @@ const styles = StyleSheet.create({
   infoChipText: {
     fontSize: FontSizes.xs,
     fontWeight: '600',
+  },
+  descriptionText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: Spacing.lg,
   },
   joinCodeSection: {
     flexDirection: 'row',
@@ -639,7 +768,6 @@ const styles = StyleSheet.create({
     color: Colors.neutral[700],
   },
   valueInput: {
-    flexDirection: 'row',
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -653,6 +781,52 @@ const styles = StyleSheet.create({
   valueUnit: {
     fontSize: FontSizes.xs,
     color: Colors.neutral[400],
+  },
+  durationInputRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  durationField: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    gap: Spacing.sm,
+  },
+  durationInput: {
+    flex: 1,
+    fontSize: FontSizes.lg,
+    color: Colors.text,
+    fontWeight: '600',
+    padding: 0,
+  },
+  durationUnit: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: Colors.neutral[500],
+  },
+  loggedTodayCard: {
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    gap: Spacing.xs,
+  },
+  loggedTodayLabel: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    color: Colors.neutral[500],
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  loggedTodayValue: {
+    fontSize: FontSizes.xl,
+    fontWeight: '700',
   },
   checkInButton: {
     flexDirection: 'row',
@@ -739,7 +913,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    backgroundColor: '#FFF5E8',
+    backgroundColor: Colors.warm[100],
     paddingHorizontal: Spacing.sm,
     paddingVertical: 2,
     borderRadius: BorderRadius.full,
@@ -764,8 +938,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.xs,
   },
+  scoreTextGroup: {
+    alignItems: 'flex-end',
+    gap: 2,
+  },
   scoreText: {
     fontSize: FontSizes.md,
     fontWeight: '700',
+  },
+  todayScoreText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '500',
+    color: Colors.neutral[500],
   },
 });
