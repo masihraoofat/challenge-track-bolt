@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,14 +14,14 @@ import {
   ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
-import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn, BookOpen, Activity, Smartphone, Sparkles } from 'lucide-react-native';
+import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn } from 'lucide-react-native';
 import { showToast } from '@/components/Toast';
+import { CompetitionIcon } from '@/components/CompetitionIcon';
 import {
-  CompetitionPreset,
   computeStreakFromDates,
   formatLeaderboardScore,
   getCompetitionConfig,
@@ -32,6 +32,7 @@ import {
 interface ParticipantInfo {
   user_id: string;
   score: number;
+  left_at?: string | null;
 }
 
 interface CompetitionWithParticipation {
@@ -41,26 +42,13 @@ interface CompetitionWithParticipation {
   end_date: string;
   creator_id: string;
   join_code: string;
-  competition_type: string;
+  icon?: string | null;
+  color?: string | null;
   scoring_mode?: string;
   unit_label?: string | null;
   description?: string | null;
   participants: ParticipantInfo[];
 }
-
-const PRESET_ICONS: Record<CompetitionPreset, React.ReactNode> = {
-  reading: <BookOpen size={20} color={Colors.primary[500]} />,
-  running: <Activity size={20} color={Colors.blue[500]} />,
-  screen_time: <Smartphone size={20} color={Colors.teal[500]} />,
-  custom: <Sparkles size={20} color={Colors.primary[500]} />,
-};
-
-const PRESET_ICONS_SMALL: Record<CompetitionPreset, React.ReactNode> = {
-  reading: <BookOpen size={14} color={Colors.primary[600]} />,
-  running: <Activity size={14} color={Colors.blue[600]} />,
-  screen_time: <Smartphone size={14} color={Colors.teal[600]} />,
-  custom: <Sparkles size={14} color={Colors.primary[600]} />,
-};
 
 export default function HomeScreen() {
   const { user } = useAuth();
@@ -83,7 +71,8 @@ export default function HomeScreen() {
     const { data: memberships, error: memberError } = await supabase
       .from('participants')
       .select('competition_id')
-      .eq('user_id', user.id);
+      .eq('user_id', user.id)
+      .is('left_at', null);
 
     if (memberError) {
       showToast('Failed to load competitions', 'error');
@@ -109,7 +98,7 @@ export default function HomeScreen() {
     const [compResult, logsResult] = await Promise.all([
       supabase
         .from('competitions')
-        .select('*, participants(user_id, score)')
+        .select('*, participants(user_id, score, left_at)')
         .in('id', compIds)
         .order('created_at', { ascending: false }),
       supabase
@@ -169,9 +158,11 @@ export default function HomeScreen() {
     setRefreshing(false);
   }, [user]);
 
-  useEffect(() => {
-    fetchCompetitions();
-  }, [fetchCompetitions]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchCompetitions();
+    }, [fetchCompetitions]),
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -190,7 +181,7 @@ export default function HomeScreen() {
 
     const { data: comp, error: findError } = await supabase
       .from('competitions')
-      .select('id')
+      .select('id, end_date')
       .eq('join_code', code)
       .single();
 
@@ -200,27 +191,24 @@ export default function HomeScreen() {
       return;
     }
 
-    const { data: existing } = await supabase
+    const { data: priorMembership } = await supabase
       .from('participants')
-      .select('user_id')
+      .select('left_at')
       .eq('competition_id', comp.id)
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (existing) {
-      showToast('You are already in this competition', 'error');
-      setJoining(false);
-      return;
-    }
-
-    const { error: joinError } = await supabase.from('participants').insert({
-      competition_id: comp.id,
-      user_id: user.id,
-      score: 0,
-    });
+    const { error: joinError } = await supabase.rpc('join_competition', { comp_id: comp.id });
 
     if (joinError) {
-      showToast('Failed to join competition', 'error');
+      const msg = joinError.message.toLowerCase();
+      if (msg.includes('already joined')) {
+        showToast('You are already in this competition', 'error');
+      } else if (msg.includes('ended')) {
+        showToast('This competition has ended', 'error');
+      } else {
+        showToast('Failed to join competition', 'error');
+      }
       setJoining(false);
       return;
     }
@@ -234,7 +222,10 @@ export default function HomeScreen() {
     setJoining(false);
     setJoinModalVisible(false);
     setJoinCode('');
-    showToast('Joined competition!', 'success');
+    showToast(
+      priorMembership?.left_at ? 'Welcome back! Your progress was restored.' : 'Joined competition!',
+      'success',
+    );
     fetchCompetitions();
   };
 
@@ -282,7 +273,7 @@ export default function HomeScreen() {
     const colorSet = config.colorSet;
     const active = isCompetitionActive(item);
     const daysLeft = getDaysRemaining(item);
-    const participantCount = item.participants?.length || 0;
+    const participantCount = item.participants?.filter((p) => !p.left_at).length || 0;
     const resolvedScore = myScores[item.id];
     const myScore = resolvedScore?.score ?? 0;
     const streak = streaks[item.id] ?? 0;
@@ -322,7 +313,7 @@ export default function HomeScreen() {
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderLeft}>
             <View style={[styles.typeChipSmall, { backgroundColor: colorSet[100] }]}>
-              {PRESET_ICONS_SMALL[config.preset]}
+              <CompetitionIcon icon={config.icon} size={14} colorSet={colorSet} />
               <Text style={[styles.typeChipText, { color: colorSet[700] }]}>{config.label}</Text>
             </View>
             <View style={[styles.statusBadge, active ? styles.statusActive : styles.statusEnded]}>
@@ -338,10 +329,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.cardBody}>
-          <View style={styles.iconRow}>
-            {PRESET_ICONS[config.preset]}
-            <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
-          </View>
+          <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
           {config.description ? (
             <Text style={styles.cardDescription} numberOfLines={2}>
               {config.description}
@@ -625,16 +613,10 @@ const styles = StyleSheet.create({
   cardBody: {
     gap: Spacing.sm,
   },
-  iconRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
   cardTitle: {
     fontSize: FontSizes.lg,
     fontWeight: '600',
     color: Colors.text,
-    flex: 1,
   },
   cardDescription: {
     fontSize: FontSizes.sm,

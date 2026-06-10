@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,16 +13,27 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { showToast } from '@/components/Toast';
+import { toLocalDateString } from '@/constants/competition';
 import {
   GoalType,
+  GoalLogStats,
   GOAL_TYPES,
   GOAL_TYPE_ORDER,
+  computeGoalLogStats,
+  formatGoalStat,
+  formatGoalTodayValue,
+  getGoalCheckInLabel,
+  getGoalLogInputType,
+  getGoalLogValueLabel,
   getGoalTypeConfig,
+  normalizeGoalType,
+  parseGoalLogValue,
 } from '@/constants/goals';
 import {
   Target,
@@ -31,6 +42,7 @@ import {
   Hash,
   Clock,
   CheckCircle,
+  CircleCheck as CheckCircle2,
   Trash2,
 } from 'lucide-react-native';
 
@@ -65,6 +77,11 @@ export default function GoalsScreen() {
   const [name, setName] = useState('');
   const [goalType, setGoalType] = useState<GoalType>('streak');
   const [saving, setSaving] = useState(false);
+  const [goalStats, setGoalStats] = useState<Record<string, GoalLogStats>>({});
+  const [logInputs, setLogInputs] = useState<
+    Record<string, { value: string; hours: string; minutes: string }>
+  >({});
+  const [checkingInId, setCheckingInId] = useState<string | null>(null);
 
   const fetchGoals = useCallback(async () => {
     if (!user) return;
@@ -77,16 +94,55 @@ export default function GoalsScreen() {
 
     if (error) {
       showToast('Failed to load goals', 'error');
-    } else {
-      setGoals(data || []);
+      setLoading(false);
+      setRefreshing(false);
+      return;
     }
+
+    const goalList = data || [];
+    setGoals(goalList);
+
+    if (goalList.length === 0) {
+      setGoalStats({});
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    const goalIds = goalList.map((g) => g.id);
+    const { data: logs, error: logsError } = await supabase
+      .from('goal_logs')
+      .select('goal_id, date_logged, value')
+      .eq('user_id', user.id)
+      .eq('completed', true)
+      .in('goal_id', goalIds);
+
+    if (logsError) {
+      showToast('Failed to load goal progress', 'error');
+    }
+
+    const today = toLocalDateString();
+    const logsByGoal: Record<string, { date_logged: string; value: unknown }[]> = {};
+    (logs || []).forEach((log) => {
+      if (!logsByGoal[log.goal_id]) logsByGoal[log.goal_id] = [];
+      logsByGoal[log.goal_id].push(log);
+    });
+
+    const stats: Record<string, GoalLogStats> = {};
+    goalList.forEach((goal) => {
+      stats[goal.id] = computeGoalLogStats(logsByGoal[goal.id] || [], today);
+    });
+    setGoalStats(stats);
+
     setLoading(false);
     setRefreshing(false);
   }, [user]);
 
-  useEffect(() => {
-    fetchGoals();
-  }, [fetchGoals]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchGoals();
+    }, [fetchGoals]),
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -135,13 +191,104 @@ export default function GoalsScreen() {
     }
 
     setGoals((prev) => prev.filter((g) => g.id !== goalId));
+    setGoalStats((prev) => {
+      const next = { ...prev };
+      delete next[goalId];
+      return next;
+    });
     showToast('Goal deleted', 'info');
+  };
+
+  const updateLogInput = (
+    goalId: string,
+    field: 'value' | 'hours' | 'minutes',
+    text: string,
+  ) => {
+    setLogInputs((prev) => ({
+      ...prev,
+      [goalId]: {
+        value: field === 'value' ? text : prev[goalId]?.value ?? '',
+        hours: field === 'hours' ? text : prev[goalId]?.hours ?? '',
+        minutes: field === 'minutes' ? text : prev[goalId]?.minutes ?? '',
+      },
+    }));
+  };
+
+  const handleLogGoal = async (goal: Goal) => {
+    if (!user) return;
+
+    const type = normalizeGoalType(goal.goal_type);
+    const stats = goalStats[goal.id];
+    if (stats?.checkedInToday) return;
+
+    const inputs = logInputs[goal.id] ?? { value: '', hours: '', minutes: '' };
+    const parsed = parseGoalLogValue(type, inputs.value, inputs.hours, inputs.minutes);
+    if ('error' in parsed) {
+      showToast(parsed.error, 'error');
+      return;
+    }
+
+    setCheckingInId(goal.id);
+    const today = toLocalDateString();
+
+    const { data: existingLog } = await supabase
+      .from('goal_logs')
+      .select('id')
+      .eq('goal_id', goal.id)
+      .eq('date_logged', today)
+      .maybeSingle();
+
+    if (existingLog) {
+      const { error } = await supabase
+        .from('goal_logs')
+        .update({ completed: true, value: parsed.value })
+        .eq('id', existingLog.id);
+
+      if (error) {
+        showToast('Failed to log progress', 'error');
+        setCheckingInId(null);
+        return;
+      }
+    } else {
+      const { error } = await supabase.from('goal_logs').insert({
+        goal_id: goal.id,
+        user_id: user.id,
+        date_logged: today,
+        completed: true,
+        value: parsed.value,
+      });
+
+      if (error) {
+        showToast('Failed to log progress', 'error');
+        setCheckingInId(null);
+        return;
+      }
+    }
+
+    setLogInputs((prev) => ({
+      ...prev,
+      [goal.id]: { value: '', hours: '', minutes: '' },
+    }));
+    setCheckingInId(null);
+    showToast('Progress logged!', 'success');
+    fetchGoals();
   };
 
   const renderGoal = ({ item }: { item: Goal }) => {
     const config = getGoalTypeConfig(item.goal_type);
     const colorSet = config.colorSet;
-    const type = (item.goal_type in GOAL_TYPES ? item.goal_type : 'streak') as GoalType;
+    const type = normalizeGoalType(item.goal_type);
+    const stats = goalStats[item.id] ?? {
+      checkedInToday: false,
+      todayValue: null,
+      streak: 0,
+      total: 0,
+      logCount: 0,
+    };
+    const logInputType = getGoalLogInputType(type);
+    const inputs = logInputs[item.id] ?? { value: '', hours: '', minutes: '' };
+    const isCheckingIn = checkingInId === item.id;
+    const checkInLabel = getGoalCheckInLabel(type);
 
     return (
       <View style={[styles.card, { borderLeftWidth: 4, borderLeftColor: colorSet[500] }]}>
@@ -162,7 +309,89 @@ export default function GoalsScreen() {
           {TYPE_ICONS[type]}
           <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
         </View>
-        <Text style={styles.cardDescription}>{config.description}</Text>
+        <Text style={[styles.statText, { color: colorSet[600] }]}>
+          {formatGoalStat(type, stats)}
+        </Text>
+
+        <View style={styles.logSection}>
+          {logInputType === 'number' && !stats.checkedInToday && (
+            <View style={styles.valueInputGroup}>
+              <Text style={styles.valueLabel}>{getGoalLogValueLabel(type)}</Text>
+              <TextInput
+                style={styles.valueInput}
+                value={inputs.value}
+                onChangeText={(text) => updateLogInput(item.id, 'value', text)}
+                placeholder="e.g. 5"
+                placeholderTextColor={Colors.neutral[400]}
+                keyboardType="decimal-pad"
+                maxLength={8}
+              />
+            </View>
+          )}
+          {logInputType === 'duration' && !stats.checkedInToday && (
+            <View style={styles.valueInputGroup}>
+              <Text style={styles.valueLabel}>{getGoalLogValueLabel(type)}</Text>
+              <View style={styles.durationInputRow}>
+                <View style={styles.durationField}>
+                  <TextInput
+                    style={styles.durationInput}
+                    value={inputs.hours}
+                    onChangeText={(text) => updateLogInput(item.id, 'hours', text)}
+                    placeholder="0"
+                    placeholderTextColor={Colors.neutral[400]}
+                    keyboardType="number-pad"
+                    maxLength={3}
+                  />
+                  <Text style={styles.durationUnit}>hr</Text>
+                </View>
+                <View style={styles.durationField}>
+                  <TextInput
+                    style={styles.durationInput}
+                    value={inputs.minutes}
+                    onChangeText={(text) => updateLogInput(item.id, 'minutes', text)}
+                    placeholder="0"
+                    placeholderTextColor={Colors.neutral[400]}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                  />
+                  <Text style={styles.durationUnit}>min</Text>
+                </View>
+              </View>
+            </View>
+          )}
+          {stats.checkedInToday && logInputType !== 'checkin' && stats.todayValue != null && (
+            <View style={[styles.loggedTodayCard, { backgroundColor: colorSet[50] }]}>
+              <Text style={styles.loggedTodayLabel}>Logged today</Text>
+              <Text style={[styles.loggedTodayValue, { color: colorSet[700] }]}>
+                {formatGoalTodayValue(type, stats.todayValue)}
+              </Text>
+            </View>
+          )}
+          <TouchableOpacity
+            style={[
+              styles.logButton,
+              { backgroundColor: colorSet[500] },
+              stats.checkedInToday && { backgroundColor: Colors.success[500] },
+            ]}
+            onPress={() => handleLogGoal(item)}
+            disabled={stats.checkedInToday || isCheckingIn}
+            activeOpacity={0.8}
+          >
+            {isCheckingIn ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : stats.checkedInToday ? (
+              <>
+                <CheckCircle2 size={20} color="#FFFFFF" />
+                <Text style={styles.logButtonText}>Logged today!</Text>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={20} color="#FFFFFF" />
+                <Text style={styles.logButtonText}>{checkInLabel}</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -176,7 +405,10 @@ export default function GoalsScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
         <View>
           <Text style={styles.title}>Goals</Text>
@@ -207,6 +439,7 @@ export default function GoalsScreen() {
           renderItem={renderGoal}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
+          keyboardShouldPersistTaps="handled"
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary[500]} />
           }
@@ -316,7 +549,7 @@ export default function GoalsScreen() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -395,10 +628,91 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.text,
   },
-  cardDescription: {
+  statText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    marginLeft: 28,
+    marginBottom: Spacing.md,
+  },
+  logSection: {
+    marginTop: Spacing.xs,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: Colors.neutral[100],
+  },
+  valueInputGroup: {
+    marginBottom: Spacing.md,
+  },
+  valueLabel: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  valueInput: {
+    backgroundColor: Colors.neutral[50],
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    fontSize: FontSizes.md,
+    color: Colors.text,
+  },
+  durationInputRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  durationField: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.neutral[50],
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+  },
+  durationInput: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    fontSize: FontSizes.md,
+    color: Colors.text,
+  },
+  durationUnit: {
     fontSize: FontSizes.sm,
     color: Colors.textSecondary,
-    marginLeft: 28,
+    fontWeight: '500',
+  },
+  loggedTodayCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+  },
+  loggedTodayLabel: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  loggedTodayValue: {
+    fontSize: FontSizes.md,
+    fontWeight: '700',
+  },
+  logButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+  },
+  logButtonText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   emptyState: {
     flex: 1,

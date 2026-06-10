@@ -10,6 +10,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -18,6 +19,9 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { showToast } from '@/components/Toast';
+import { CompetitionIcon } from '@/components/CompetitionIcon';
+import { CompetitionChart } from '@/components/CompetitionChart';
+import { type ChartLog } from '@/lib/chartData';
 import {
   ArrowLeft,
   CircleCheck as CheckCircle2,
@@ -26,15 +30,12 @@ import {
   Calendar,
   Users,
   Copy,
-  BookOpen,
-  Activity,
-  Smartphone,
-  Sparkles,
+  Trash2,
+  LogOut,
 } from 'lucide-react-native';
 import {
   type CompetitionConfig,
   type CompetitionRow,
-  CompetitionPreset,
   computeStreakFromDates,
   formatDuration,
   formatLeaderboardScore,
@@ -43,9 +44,8 @@ import {
   getCompetitionConfig,
   getLeaderboardTitle,
   getLogValueLabel,
-  parseScreenTimeLog,
+  parseDurationLog,
   resolveCompetitionScore,
-  SCORING_MODES,
   toScoreNumber,
 } from '@/constants/competition';
 
@@ -55,6 +55,7 @@ interface CompetitionDetail extends CompetitionRow {
   start_date: string;
   end_date: string;
   join_code: string;
+  creator_id: string;
 }
 
 interface LeaderboardEntry {
@@ -67,20 +68,14 @@ interface LeaderboardEntry {
   hasLogged: boolean;
 }
 
-const PRESET_ICONS: Record<CompetitionPreset, React.ReactNode> = {
-  reading: <BookOpen size={16} color={Colors.primary[500]} />,
-  running: <Activity size={16} color={Colors.blue[500]} />,
-  screen_time: <Smartphone size={16} color={Colors.teal[500]} />,
-  custom: <Sparkles size={16} color={Colors.primary[500]} />,
-};
-
 function formatTodayValue(config: CompetitionConfig, value: number): string {
   if (config.logInputType === 'duration') return formatDuration(value);
   return formatUnitScore(value, config.unitLabel, config.logInputType);
 }
 
 export default function CompetitionDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: rawId } = useLocalSearchParams<{ id: string | string[] }>();
+  const id = Array.isArray(rawId) ? rawId[0] : rawId;
   const router = useRouter();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -95,6 +90,14 @@ export default function CompetitionDetailScreen() {
   const [logHours, setLogHours] = useState('');
   const [logMinutes, setLogMinutes] = useState('');
   const [todayLoggedValue, setTodayLoggedValue] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [isActiveParticipant, setIsActiveParticipant] = useState(false);
+  const [hasLeft, setHasLeft] = useState(false);
+  const [leaveModalVisible, setLeaveModalVisible] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [rejoining, setRejoining] = useState(false);
+  const [chartLogs, setChartLogs] = useState<ChartLog[]>([]);
 
   const fetchData = useCallback(async () => {
     if (!id || !user) return;
@@ -112,13 +115,27 @@ export default function CompetitionDetailScreen() {
       return;
     }
     setCompetition(comp);
+    setChartLogs([]);
 
     const config = getCompetitionConfig(comp);
 
-    const { data: participants, error: partError } = await supabase
-      .from('participants')
-      .select('user_id, score, users!inner(username)')
-      .eq('competition_id', id);
+    const [{ data: myMembership }, { data: participants, error: partError }] = await Promise.all([
+      supabase
+        .from('participants')
+        .select('left_at')
+        .eq('competition_id', id)
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('participants')
+        .select('user_id, score, users!inner(username)')
+        .eq('competition_id', id)
+        .is('left_at', null),
+    ]);
+
+    const activeParticipant = !!myMembership && myMembership.left_at === null;
+    setIsActiveParticipant(activeParticipant);
+    setHasLeft(!!myMembership && myMembership.left_at !== null);
 
     if (partError) {
       showToast('Failed to load leaderboard', 'error');
@@ -155,6 +172,7 @@ export default function CompetitionDetailScreen() {
       const datesByUser: Record<string, Set<string>> = {};
 
       if (allLogs) {
+        setChartLogs(allLogs);
         allLogs.forEach((log: any) => {
           logCounts[log.user_id] = (logCounts[log.user_id] || 0) + 1;
           const val = toScoreNumber(log.value);
@@ -257,9 +275,10 @@ export default function CompetitionDetailScreen() {
         return;
       }
       valueToLog = amount;
-      scoreAmount = amount;
+      // Daily-streak mode counts days logged, not the numeric value entered.
+      scoreAmount = config.scoringMode === 'daily' ? 1 : amount;
     } else if (config.logInputType === 'duration') {
-      const parsed = parseScreenTimeLog(logHours, logMinutes);
+      const parsed = parseDurationLog(logHours, logMinutes);
       if ('error' in parsed) {
         showToast(parsed.error, 'error');
         setCheckingIn(false);
@@ -379,10 +398,88 @@ export default function CompetitionDetailScreen() {
     router.replace('/(tabs)');
   };
 
+  const isCreator = competition?.creator_id === user?.id;
+
+  const handleDeletePress = () => {
+    if (!id || !isCreator || deleting) return;
+    setDeleteModalVisible(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!id) return;
+
+    setDeleting(true);
+    const { error } = await supabase.rpc('delete_competition', { comp_id: id });
+
+    if (error) {
+      showToast(error.message || 'Failed to delete challenge', 'error');
+      setDeleting(false);
+      return;
+    }
+
+    setDeleteModalVisible(false);
+    setDeleting(false);
+    showToast('Challenge deleted', 'info');
+    handleBack();
+  };
+
+  const handleLeavePress = () => {
+    if (!id || !isActiveParticipant || leaving) return;
+    setLeaveModalVisible(true);
+  };
+
+  const confirmLeave = async () => {
+    if (!id) return;
+
+    setLeaving(true);
+    const { error } = await supabase.rpc('leave_competition', { comp_id: id });
+
+    if (error) {
+      showToast(error.message || 'Failed to leave challenge', 'error');
+      setLeaving(false);
+      return;
+    }
+
+    setLeaveModalVisible(false);
+    setLeaving(false);
+    showToast('Left challenge', 'info');
+    handleBack();
+  };
+
+  const handleRejoin = async () => {
+    if (!id || rejoining) return;
+
+    setRejoining(true);
+    const { error } = await supabase.rpc('join_competition', { comp_id: id });
+
+    if (error) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes('ended')) {
+        showToast('This competition has ended', 'error');
+      } else {
+        showToast('Failed to rejoin challenge', 'error');
+      }
+      setRejoining(false);
+      return;
+    }
+
+    setRejoining(false);
+    showToast('Welcome back! Your progress was restored.', 'success');
+    fetchData();
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={Colors.primary[500]} />
+      </View>
+    );
+  }
+
+  if (!competition) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={styles.errorText}>Competition not found</Text>
       </View>
     );
   }
@@ -442,7 +539,6 @@ export default function CompetitionDetailScreen() {
           </View>
         </View>
         <View style={styles.scoreContainer}>
-          {PRESET_ICONS[config.preset]}
           <View style={styles.scoreTextGroup}>
             <Text style={[styles.scoreText, { color: colorSet[600] }]}>{getScoreDisplay(item)}</Text>
             {config.logInputType !== 'checkin' && item.todayValue != null && (
@@ -474,13 +570,31 @@ export default function CompetitionDetailScreen() {
           <ArrowLeft size={24} color={Colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleRow}>
-          {PRESET_ICONS[config.preset]}
+          <CompetitionIcon icon={config.icon} size={18} colorSet={colorSet} />
           <Text style={styles.headerTitle} numberOfLines={1}>{competition?.title}</Text>
         </View>
-        <View style={{ width: 40 }} />
+        {isCreator ? (
+          <TouchableOpacity
+            onPress={handleDeletePress}
+            style={styles.headerActionButton}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            disabled={deleting}
+            accessibilityRole="button"
+            accessibilityLabel="Delete challenge"
+          >
+            {deleting ? (
+              <ActivityIndicator size="small" color={Colors.error[500]} />
+            ) : (
+              <Trash2 size={22} color={Colors.error[500]} />
+            )}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
       </View>
 
       <FlatList
+        style={styles.list}
         data={leaderboard}
         renderItem={renderLeaderboardItem}
         keyExtractor={(item) => item.user_id}
@@ -489,14 +603,8 @@ export default function CompetitionDetailScreen() {
           <View style={styles.infoSection}>
             <View style={styles.competitionInfo}>
               <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
-                {PRESET_ICONS[config.preset]}
+                <CompetitionIcon icon={config.icon} size={14} colorSet={colorSet} />
                 <Text style={[styles.infoChipText, { color: colorSet[700] }]}>{config.label}</Text>
-              </View>
-              <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
-                <Trophy size={14} color={colorSet[600]} />
-                <Text style={[styles.infoChipText, { color: colorSet[700] }]}>
-                  {SCORING_MODES[config.scoringMode].label}
-                </Text>
               </View>
               <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
                 <Calendar size={14} color={colorSet[600]} />
@@ -542,7 +650,31 @@ export default function CompetitionDetailScreen() {
               </View>
             )}
 
-            {active && (
+            {hasLeft && (
+              <View style={[styles.rejoinSection, { backgroundColor: colorSet[50], borderColor: colorSet[200] }]}>
+                <Text style={styles.rejoinTitle}>You left this challenge</Text>
+                <Text style={styles.rejoinMessage}>
+                  Rejoin before it ends to restore your score and log history.
+                </Text>
+                {active ? (
+                  <TouchableOpacity
+                    style={[styles.rejoinButton, { backgroundColor: colorSet[500] }]}
+                    onPress={handleRejoin}
+                    disabled={rejoining}
+                  >
+                    {rejoining ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                      <Text style={styles.rejoinButtonText}>Rejoin Challenge</Text>
+                    )}
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.rejoinEndedText}>This challenge has ended.</Text>
+                )}
+              </View>
+            )}
+
+            {active && isActiveParticipant && (
               <View style={styles.checkInSection}>
                 {config.logInputType === 'number' && !checkedInToday && (
                   <View style={styles.valueInputGroup}>
@@ -553,7 +685,7 @@ export default function CompetitionDetailScreen() {
                       onChangeText={setLogValue}
                       placeholder="e.g. 5"
                       placeholderTextColor={Colors.neutral[400]}
-                      keyboardType="decimal-pad"
+                      keyboardType={config.unitLabel === 'pages' ? 'number-pad' : 'decimal-pad'}
                       maxLength={8}
                     />
                     {config.unitLabel ? (
@@ -629,11 +761,51 @@ export default function CompetitionDetailScreen() {
               </View>
             )}
 
+            <CompetitionChart
+              config={config}
+              logs={chartLogs}
+              participants={leaderboard.map((entry) => ({
+                user_id: entry.user_id,
+                username: entry.username,
+              }))}
+              startDate={competition.start_date}
+              endDate={competition.end_date}
+              colorSet={colorSet}
+            />
+
             <View style={styles.leaderboardHeader}>
               <Trophy size={20} color={Colors.warm[500]} />
               <Text style={styles.leaderboardTitle}>{getLeaderboardTitle(config)}</Text>
             </View>
           </View>
+        }
+        ListFooterComponent={
+          isActiveParticipant ? (
+            <View
+              style={[
+                styles.leaveFooter,
+                { paddingBottom: Math.max(insets.bottom, Spacing.lg) },
+              ]}
+            >
+              <TouchableOpacity
+                style={[styles.leaveFooterButton, leaving && styles.leaveFooterButtonDisabled]}
+                onPress={handleLeavePress}
+                disabled={leaving}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Leave challenge"
+              >
+                {leaving ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <>
+                    <LogOut size={16} color="#FFFFFF" />
+                    <Text style={styles.leaveFooterButtonText}>Leave</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : null
         }
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colorSet[500]} />
@@ -641,6 +813,78 @@ export default function CompetitionDetailScreen() {
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       />
+
+      <Modal
+        visible={deleteModalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => !deleting && setDeleteModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalContent}>
+            <Text style={styles.deleteModalTitle}>Delete challenge?</Text>
+            <Text style={styles.deleteModalMessage}>
+              This will permanently remove the challenge and all participant data. This cannot be undone.
+            </Text>
+            <View style={styles.deleteModalButtons}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelButton}
+                onPress={() => setDeleteModalVisible(false)}
+                disabled={deleting}
+              >
+                <Text style={styles.deleteModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.deleteModalConfirmButton, deleting && styles.deleteModalConfirmDisabled]}
+                onPress={confirmDelete}
+                disabled={deleting}
+              >
+                {deleting ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmText}>Delete</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={leaveModalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => !leaving && setLeaveModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={styles.deleteModalContent}>
+            <Text style={styles.deleteModalTitle}>Leave challenge?</Text>
+            <Text style={styles.deleteModalMessage}>
+              This challenge will be removed from your home screen. Your score and logs are saved — rejoin with the invite code before it ends to pick up where you left off.
+            </Text>
+            <View style={styles.deleteModalButtons}>
+              <TouchableOpacity
+                style={styles.deleteModalCancelButton}
+                onPress={() => setLeaveModalVisible(false)}
+                disabled={leaving}
+              >
+                <Text style={styles.deleteModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.leaveModalConfirmButton, leaving && styles.deleteModalConfirmDisabled]}
+                onPress={confirmLeave}
+                disabled={leaving}
+              >
+                {leaving ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.deleteModalConfirmText}>Leave</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -650,11 +894,18 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  list: {
+    flex: 1,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.background,
+  },
+  errorText: {
+    fontSize: FontSizes.md,
+    color: Colors.neutral[500],
   },
   header: {
     flexDirection: 'row',
@@ -671,6 +922,21 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  deleteButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerActionButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerSpacer: {
+    width: 40,
   },
   headerTitleRow: {
     flex: 1,
@@ -863,7 +1129,7 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
   listContent: {
-    paddingBottom: Spacing.xxl,
+    paddingBottom: Spacing.lg,
   },
   leaderboardRow: {
     flexDirection: 'row',
@@ -950,5 +1216,130 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     fontWeight: '500',
     color: Colors.neutral[500],
+  },
+  deleteModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+  },
+  deleteModalContent: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.lg,
+  },
+  deleteModalTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  deleteModalMessage: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: Spacing.lg,
+  },
+  deleteModalButtons: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  deleteModalCancelButton: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.neutral[100],
+    alignItems: 'center',
+  },
+  deleteModalCancelText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: Colors.neutral[600],
+  },
+  deleteModalConfirmButton: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.error[500],
+    alignItems: 'center',
+  },
+  deleteModalConfirmDisabled: {
+    opacity: 0.6,
+  },
+  deleteModalConfirmText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  leaveModalConfirmButton: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.neutral[700],
+    alignItems: 'center',
+  },
+  rejoinSection: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg,
+  },
+  rejoinTitle: {
+    fontSize: FontSizes.md,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: Spacing.xs,
+  },
+  rejoinMessage: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: Spacing.md,
+  },
+  rejoinButton: {
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+  },
+  rejoinButtonText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  rejoinEndedText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
+  },
+  leaveFooter: {
+    alignItems: 'flex-end',
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.xl,
+  },
+  leaveFooterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.error[500],
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  leaveFooterButtonDisabled: {
+    opacity: 0.6,
+  },
+  leaveFooterButtonText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

@@ -4,7 +4,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { showToast } from '@/components/Toast';
 import { User, LogOut, BookOpen, Trophy, Flame } from 'lucide-react-native';
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { computeStreakFromDates } from '@/constants/competition';
 
@@ -14,45 +15,48 @@ export default function ProfileScreen() {
   const [stats, setStats] = useState({ competitions: 0, daysLogged: 0, currentStreak: 0 });
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function fetchStats() {
-      if (!user) return;
+  const fetchStats = useCallback(async () => {
+    if (!user) return;
 
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      const dateStr = sevenDaysAgo.toISOString().split('T')[0];
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const dateStr = sevenDaysAgo.toISOString().split('T')[0];
 
-      const [compResult, daysResult, logsResult] = await Promise.all([
-        supabase
-          .from('participants')
-          .select('competition_id', { count: 'exact', head: true })
-          .eq('user_id', user.id),
-        supabase
-          .from('daily_logs')
-          .select('id', { count: 'exact', head: true })
-          .eq('user_id', user.id)
-          .eq('completed', true),
-        supabase
-          .from('daily_logs')
-          .select('date_logged')
-          .eq('user_id', user.id)
-          .eq('completed', true)
-          .gte('date_logged', dateStr)
-          .order('date_logged', { ascending: false }),
-      ]);
+    const [compResult, daysResult, logsResult] = await Promise.all([
+      supabase
+        .from('participants')
+        .select('competition_id', { count: 'exact', head: true })
+        .eq('user_id', user.id),
+      supabase
+        .from('daily_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('completed', true),
+      supabase
+        .from('daily_logs')
+        .select('date_logged')
+        .eq('user_id', user.id)
+        .eq('completed', true)
+        .gte('date_logged', dateStr)
+        .order('date_logged', { ascending: false }),
+    ]);
 
-      const loggedDates = new Set((logsResult.data || []).map((l) => l.date_logged));
-      const streak = computeStreakFromDates(loggedDates, 7);
+    const loggedDates = new Set((logsResult.data || []).map((l) => l.date_logged));
+    const streak = computeStreakFromDates(loggedDates, 7);
 
-      setStats({
-        competitions: compResult.count ?? 0,
-        daysLogged: daysResult.count ?? 0,
-        currentStreak: streak,
-      });
-      setLoading(false);
-    }
-    fetchStats();
+    setStats({
+      competitions: compResult.count ?? 0,
+      daysLogged: daysResult.count ?? 0,
+      currentStreak: streak,
+    });
+    setLoading(false);
   }, [user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchStats();
+    }, [fetchStats]),
+  );
 
   const handleSignOut = async () => {
     await signOut();

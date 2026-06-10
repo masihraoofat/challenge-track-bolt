@@ -1,31 +1,126 @@
 import { Colors } from './theme';
+import { buildColorSetFromHex, isCustomHexColor } from '@/lib/colorUtils';
 
 export type ScoringMode = 'daily' | 'cumulative_high' | 'cumulative_low';
-export type CompetitionPreset = 'reading' | 'running' | 'screen_time' | 'custom';
 export type LogInputType = 'checkin' | 'number' | 'duration';
+export type CompetitionColor =
+  | 'primary'
+  | 'blue'
+  | 'teal'
+  | 'success'
+  | 'warm'
+  | 'purple'
+  | 'red';
+export type CompetitionIcon =
+  | 'trophy'
+  | 'book'
+  | 'activity'
+  | 'flame'
+  | 'target'
+  | 'zap'
+  | 'star'
+  | 'heart'
+  | 'clock'
+  | 'dumbbell'
+  | 'apple'
+  | 'coffee'
+  | 'smartphone'
+  | 'sparkles'
+  | 'bike'
+  | 'moon'
+  | 'sun'
+  | 'medal'
+  | 'music'
+  | 'leaf';
 
-/** @deprecated Use CompetitionPreset — kept for gradual migration */
-export type CompetitionType = CompetitionPreset;
+export interface CompetitionColorSet {
+  50: string;
+  100: string;
+  200: string;
+  400: string;
+  500: string;
+  600: string;
+  700: string;
+}
+
+export const COMPETITION_COLORS: Record<CompetitionColor, CompetitionColorSet> = {
+  primary: Colors.primary,
+  blue: Colors.blue,
+  teal: Colors.teal,
+  purple: Colors.purple,
+  red: Colors.red,
+  warm: {
+    50: Colors.warm[50],
+    100: Colors.warm[100],
+    200: Colors.warm[200],
+    400: Colors.warm[400],
+    500: Colors.warm[500],
+    600: '#E89B2E',
+    700: '#CC8520',
+  },
+  success: {
+    50: Colors.success[50],
+    100: Colors.success[100],
+    200: Colors.success[100],
+    400: Colors.success[400],
+    500: Colors.success[500],
+    600: Colors.success[600],
+    700: Colors.success[600],
+  },
+};
+
+export const COMPETITION_COLOR_ORDER: CompetitionColor[] = [
+  'primary',
+  'blue',
+  'teal',
+  'success',
+  'warm',
+  'purple',
+  'red',
+];
+
+export const COMPETITION_ICON_ORDER: CompetitionIcon[] = [
+  'trophy',
+  'flame',
+  'target',
+  'star',
+  'book',
+  'activity',
+  'dumbbell',
+  'heart',
+  'zap',
+  'clock',
+  'apple',
+  'coffee',
+  'smartphone',
+  'sparkles',
+  'bike',
+  'moon',
+  'sun',
+  'medal',
+  'music',
+  'leaf',
+];
 
 export interface CompetitionRow {
-  competition_type?: string | null;
   scoring_mode?: string | null;
   unit_label?: string | null;
   description?: string | null;
   title?: string;
+  icon?: string | null;
+  color?: string | null;
 }
 
 export interface CompetitionConfig {
-  preset: CompetitionPreset;
   scoringMode: ScoringMode;
   unitLabel: string | null;
   description: string | null;
   sortOrder: 'desc' | 'asc';
   logInputType: LogInputType;
   label: string;
-  placeholder: string;
-  colorSet: typeof Colors.primary;
-  icon: string;
+  icon: CompetitionIcon;
+  color: string;
+  colorSet: CompetitionColorSet;
 }
 
 export const SCORING_MODES: Record<ScoringMode, {
@@ -54,109 +149,79 @@ export const SCORING_MODES: Record<ScoringMode, {
   },
 };
 
-export const COMPETITION_PRESETS: Record<CompetitionPreset, {
-  label: string;
-  defaultScoringMode: ScoringMode;
-  defaultUnitLabel: string | null;
-  logInputType: LogInputType;
-  placeholder: string;
-  colorSet: typeof Colors.primary;
-  icon: string;
-}> = {
-  reading: {
-    label: 'Reading',
-    defaultScoringMode: 'daily',
-    defaultUnitLabel: null,
-    logInputType: 'checkin',
-    placeholder: 'e.g. Read 20 pages a day',
-    colorSet: Colors.primary,
-    icon: 'BookOpen',
-  },
-  running: {
-    label: 'Running',
-    defaultScoringMode: 'cumulative_high',
-    defaultUnitLabel: 'km',
-    logInputType: 'number',
-    placeholder: 'e.g. Run 5km a day',
-    colorSet: Colors.blue,
-    icon: 'Activity',
-  },
-  screen_time: {
-    label: 'Screen Time',
-    defaultScoringMode: 'cumulative_low',
-    defaultUnitLabel: 'hr',
-    logInputType: 'duration',
-    placeholder: 'e.g. Under 2 hours screen time',
-    colorSet: Colors.teal,
-    icon: 'Smartphone',
-  },
-  custom: {
-    label: 'Custom',
-    defaultScoringMode: 'cumulative_high',
-    defaultUnitLabel: null,
-    logInputType: 'number',
-    placeholder: 'e.g. Drink 8 glasses of water daily',
-    colorSet: Colors.primary,
-    icon: 'Sparkles',
-  },
-};
-
-/** @deprecated Use COMPETITION_PRESETS */
-export const COMPETITION_TYPES = COMPETITION_PRESETS;
-
-function normalizePreset(type: string | null | undefined): CompetitionPreset {
-  if (type === 'reading' || type === 'running' || type === 'screen_time' || type === 'custom') {
-    return type;
-  }
-  return 'reading';
-}
-
-function normalizeScoringMode(mode: string | null | undefined, preset: CompetitionPreset): ScoringMode {
+function normalizeScoringMode(mode: string | null | undefined): ScoringMode {
   if (mode === 'daily' || mode === 'cumulative_high' || mode === 'cumulative_low') {
     return mode;
   }
-  return COMPETITION_PRESETS[preset].defaultScoringMode;
+  return 'daily';
+}
+
+function normalizePresetColor(color: string | null | undefined): CompetitionColor {
+  if (color && color in COMPETITION_COLORS) {
+    return color as CompetitionColor;
+  }
+  return 'primary';
+}
+
+export function resolveCompetitionColorSet(color: string | null | undefined): CompetitionColorSet {
+  if (isCustomHexColor(color)) {
+    return buildColorSetFromHex(color!) ?? COMPETITION_COLORS.primary;
+  }
+  return COMPETITION_COLORS[normalizePresetColor(color)];
+}
+
+export function isPresetColor(color: string | null | undefined): color is CompetitionColor {
+  return !!color && color in COMPETITION_COLORS;
+}
+
+function normalizeIcon(icon: string | null | undefined): CompetitionIcon {
+  if (icon && COMPETITION_ICON_ORDER.includes(icon as CompetitionIcon)) {
+    return icon as CompetitionIcon;
+  }
+  return 'trophy';
+}
+
+function isDurationUnit(unit: string | null | undefined): boolean {
+  if (!unit) return false;
+  const u = unit.trim().toLowerCase();
+  return (
+    u === 'hr' ||
+    u === 'hrs' ||
+    u === 'hour' ||
+    u === 'hours' ||
+    u === 'min' ||
+    u === 'mins' ||
+    u === 'minute' ||
+    u === 'minutes'
+  );
+}
+
+/** Derive the log UI from scoring mode and unit label. */
+function resolveLogInputType(scoringMode: ScoringMode, unitLabel: string | null): LogInputType {
+  if (isDurationUnit(unitLabel)) return 'duration';
+  if (scoringMode === 'daily' && !unitLabel?.trim()) return 'checkin';
+  return 'number';
 }
 
 export function getCompetitionConfig(competition: CompetitionRow | null | undefined): CompetitionConfig {
-  const preset = normalizePreset(competition?.competition_type);
-  const presetDefaults = COMPETITION_PRESETS[preset];
-  const scoringMode = normalizeScoringMode(competition?.scoring_mode, preset);
+  const scoringMode = normalizeScoringMode(competition?.scoring_mode);
   const scoringConfig = SCORING_MODES[scoringMode];
-
-  let logInputType = presetDefaults.logInputType;
-  if (preset === 'custom') {
-    logInputType = scoringMode === 'daily' ? 'checkin' : 'number';
-  } else if (preset === 'screen_time' && scoringMode === 'cumulative_low') {
-    logInputType = 'duration';
-  } else if (scoringMode === 'daily') {
-    logInputType = 'checkin';
-  } else if (logInputType === 'duration' && preset !== 'screen_time') {
-    logInputType = 'number';
-  }
-
-  const unitLabel =
-    competition?.unit_label?.trim() ||
-    presetDefaults.defaultUnitLabel ||
-    null;
+  const unitLabel = competition?.unit_label?.trim() || null;
+  const logInputType = resolveLogInputType(scoringMode, unitLabel);
+  const storedColor = competition?.color?.trim() || 'primary';
+  const icon = normalizeIcon(competition?.icon);
 
   return {
-    preset,
     scoringMode,
     unitLabel,
     description: competition?.description?.trim() || null,
     sortOrder: scoringConfig.sortOrder,
     logInputType,
-    label: preset === 'custom' ? 'Custom Challenge' : presetDefaults.label,
-    placeholder: presetDefaults.placeholder,
-    colorSet: presetDefaults.colorSet,
-    icon: presetDefaults.icon,
+    label: scoringConfig.label,
+    icon,
+    color: storedColor,
+    colorSet: resolveCompetitionColorSet(storedColor),
   };
-}
-
-/** @deprecated Use getCompetitionConfig */
-export function getCompetitionTypeConfig(type: string) {
-  return getCompetitionConfig({ competition_type: type });
 }
 
 /** Supabase returns PostgreSQL numeric columns as strings — normalize everywhere. */
@@ -183,7 +248,7 @@ export function formatDuration(decimalHours: unknown): string {
   return `${hours} hr${hours === 1 ? '' : 's'} ${minutes} min`;
 }
 
-export function parseScreenTimeLog(
+export function parseDurationLog(
   hoursStr: string,
   minutesStr: string,
 ): { decimalHours: number } | { error: string } {
@@ -207,16 +272,15 @@ export function parseScreenTimeLog(
   return { decimalHours: hours + minutes / 60 };
 }
 
+/** @deprecated Use parseDurationLog */
+export const parseScreenTimeLog = parseDurationLog;
+
 export function formatUnitScore(score: number, unitLabel: string | null, logInputType: LogInputType): string {
-  if (logInputType === 'duration' || unitLabel === 'hr') {
+  if (logInputType === 'duration' || isDurationUnit(unitLabel)) {
     return formatDuration(score);
   }
   const unit = unitLabel || 'pts';
   const formatted = trimZeros(score, 1);
-  const n = parseFloat(formatted);
-  if (unit === 'km' || unit === 'mi') {
-    return `${formatted} ${unit}`;
-  }
   return `${formatted} ${unit}`;
 }
 
@@ -262,13 +326,9 @@ export function formatLeaderboardScore(
   return formatUnitScore(safe, config.unitLabel, config.logInputType);
 }
 
-export function formatScore(config: CompetitionConfig | CompetitionPreset, score: unknown): string {
-  const resolved =
-    typeof config === 'string'
-      ? getCompetitionConfig({ competition_type: config })
-      : config;
+export function formatScore(config: CompetitionConfig, score: unknown): string {
   const safe = toScoreNumber(score);
-  return formatLeaderboardScore(resolved, safe, safe > 0);
+  return formatLeaderboardScore(config, safe, safe > 0);
 }
 
 export function getLeaderboardTitle(config: CompetitionConfig): string {
@@ -278,27 +338,34 @@ export function getLeaderboardTitle(config: CompetitionConfig): string {
 
 export function getCheckInLabel(config: CompetitionConfig): string {
   if (config.scoringMode === 'daily') return "Log Today's Progress";
-  if (config.logInputType === 'duration') return "Log Today's Screen Time";
+  if (config.logInputType === 'duration') return "Log Today's Time";
   return "Log Today's Entry";
 }
 
 export function getLogValueLabel(config: CompetitionConfig): string {
-  if (config.logInputType === 'duration') return 'Screen time today';
+  if (config.logInputType === 'duration') return 'Time today';
   const unit = config.unitLabel || 'units';
   return `${unit.charAt(0).toUpperCase() + unit.slice(1)} today`;
+}
+
+/** YYYY-MM-DD in the user's local timezone. */
+export function toLocalDateString(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 /** Count consecutive logged days ending today (or yesterday if today not logged). */
 export function computeStreakFromDates(loggedDates: Set<string>, maxDays = 30): number {
   if (loggedDates.size === 0) return 0;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const checkDate = new Date(today);
+  const checkDate = new Date();
+  checkDate.setHours(0, 0, 0, 0);
   let streak = 0;
 
   for (let i = 0; i < maxDays; i++) {
-    const dateStr = checkDate.toISOString().split('T')[0];
+    const dateStr = toLocalDateString(checkDate);
     if (loggedDates.has(dateStr)) {
       streak++;
     } else if (i > 0) {

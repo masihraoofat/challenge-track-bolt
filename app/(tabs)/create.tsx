@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -17,24 +18,26 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { showToast } from '@/components/Toast';
-import { ArrowLeft, BookOpen, Copy, Activity, Smartphone, Sparkles } from 'lucide-react-native';
+import { ArrowLeft, Copy, Pipette } from 'lucide-react-native';
 import DatePicker from '@/components/DatePicker';
+import { CompetitionIcon } from '@/components/CompetitionIcon';
+import { ColorPickerModal } from '@/components/ColorPickerModal';
 import {
-  CompetitionPreset,
-  COMPETITION_PRESETS,
+  COMPETITION_COLOR_ORDER,
+  COMPETITION_COLORS,
+  COMPETITION_ICON_ORDER,
+  CompetitionIcon as CompetitionIconName,
+  resolveCompetitionColorSet,
   SCORING_MODES,
   ScoringMode,
-  getCompetitionConfig,
 } from '@/constants/competition';
+import { isCustomHexColor } from '@/lib/colorUtils';
 
-const PRESET_ICONS: Record<CompetitionPreset, React.ReactNode> = {
-  reading: <BookOpen size={24} color={Colors.primary[600]} />,
-  running: <Activity size={24} color={Colors.blue[600]} />,
-  screen_time: <Smartphone size={24} color={Colors.teal[600]} />,
-  custom: <Sparkles size={24} color={Colors.primary[600]} />,
-};
-
-const PRESET_ORDER: CompetitionPreset[] = ['reading', 'running', 'screen_time', 'custom'];
+const ICON_GAP = Spacing.sm;
+const ICON_ROWS = [
+  COMPETITION_ICON_ORDER.slice(0, 10),
+  COMPETITION_ICON_ORDER.slice(10, 20),
+] as const;
 
 export default function CreateCompetitionScreen() {
   const router = useRouter();
@@ -45,9 +48,11 @@ export default function CreateCompetitionScreen() {
   const [description, setDescription] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [preset, setPreset] = useState<CompetitionPreset>('reading');
   const [scoringMode, setScoringMode] = useState<ScoringMode>('daily');
   const [unitLabel, setUnitLabel] = useState('');
+  const [icon, setIcon] = useState<CompetitionIconName>('trophy');
+  const [color, setColor] = useState<string>('primary');
+  const [colorPickerVisible, setColorPickerVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [createdCode, setCreatedCode] = useState<string | null>(null);
 
@@ -59,20 +64,9 @@ export default function CreateCompetitionScreen() {
   useEffect(() => {
     createdCodeRef.current = createdCode;
   }, [createdCode]);
-  const presetConfig = COMPETITION_PRESETS[preset];
-  const previewConfig = getCompetitionConfig({
-    competition_type: preset,
-    scoring_mode: scoringMode,
-    unit_label: unitLabel.trim() || presetConfig.defaultUnitLabel,
-    description: description.trim() || null,
-  });
 
-  const applyPreset = (p: CompetitionPreset) => {
-    const cfg = COMPETITION_PRESETS[p];
-    setPreset(p);
-    setScoringMode(cfg.defaultScoringMode);
-    setUnitLabel(cfg.defaultUnitLabel || '');
-  };
+  const colorSet = resolveCompetitionColorSet(color);
+  const customColorSelected = isCustomHexColor(color);
 
   useFocusEffect(
     useCallback(() => {
@@ -82,9 +76,11 @@ export default function CreateCompetitionScreen() {
           setDescription('');
           setStartDate('');
           setEndDate('');
-          setPreset('reading');
           setScoringMode('daily');
           setUnitLabel('');
+          setIcon('trophy');
+          setColor('primary');
+          setColorPickerVisible(false);
           setCreatedCode(null);
           setLoading(false);
         }
@@ -113,10 +109,7 @@ export default function CreateCompetitionScreen() {
 
     setLoading(true);
 
-    const resolvedUnit =
-      scoringMode === 'daily'
-        ? null
-        : unitLabel.trim() || presetConfig.defaultUnitLabel || null;
+    const resolvedUnit = unitLabel.trim() || null;
 
     const { data: competition, error: compError } = await supabase
       .from('competitions')
@@ -125,10 +118,11 @@ export default function CreateCompetitionScreen() {
         start_date: startDate,
         end_date: endDate,
         creator_id: user.id,
-        competition_type: preset,
         scoring_mode: scoringMode,
         unit_label: resolvedUnit,
         description: description.trim() || null,
+        icon,
+        color,
       })
       .select()
       .single();
@@ -157,7 +151,6 @@ export default function CreateCompetitionScreen() {
       event_data: {
         competition_id: competition.id,
         title: title.trim(),
-        type: preset,
         scoring_mode: scoringMode,
       },
     });
@@ -194,21 +187,21 @@ export default function CreateCompetitionScreen() {
         </View>
 
         <View style={styles.successContent}>
-          <View style={[styles.successIcon, { backgroundColor: previewConfig.colorSet[100] }]}>
-            {PRESET_ICONS[preset]}
+          <View style={[styles.successIcon, { backgroundColor: colorSet[100] }]}>
+            <CompetitionIcon icon={icon} size={36} colorSet={colorSet} />
           </View>
           <Text style={styles.successTitle}>All set!</Text>
           <Text style={styles.successSubtitle}>
-            Share this code with friends so they can join your {previewConfig.label.toLowerCase()} challenge
+            Share this code with friends so they can join your challenge
           </Text>
 
-          <View style={[styles.codeCard, { borderColor: previewConfig.colorSet[200] }]}>
+          <View style={[styles.codeCard, { borderColor: colorSet[200] }]}>
             <Text style={styles.codeLabel}>Join Code</Text>
-            <Text style={[styles.codeText, { color: previewConfig.colorSet[600] }]}>{createdCode}</Text>
+            <Text style={[styles.codeText, { color: colorSet[600] }]}>{createdCode}</Text>
           </View>
 
           <TouchableOpacity
-            style={[styles.shareButton, { backgroundColor: previewConfig.colorSet[500] }]}
+            style={[styles.shareButton, { backgroundColor: colorSet[500] }]}
             onPress={handleCopyCode}
           >
             <Copy size={20} color="#FFFFFF" />
@@ -216,7 +209,7 @@ export default function CreateCompetitionScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.doneButton} onPress={handleDone}>
-            <Text style={[styles.doneButtonText, { color: previewConfig.colorSet[600] }]}>Done</Text>
+            <Text style={[styles.doneButtonText, { color: colorSet[600] }]}>Done</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -238,41 +231,98 @@ export default function CreateCompetitionScreen() {
         </View>
 
         <View style={styles.iconSection}>
-          <View style={[styles.iconContainer, { backgroundColor: previewConfig.colorSet[100] }]}>
-            {PRESET_ICONS[preset]}
+          <View style={[styles.iconContainer, { backgroundColor: colorSet[100] }]}>
+            <CompetitionIcon icon={icon} size={36} colorSet={colorSet} />
           </View>
           <Text style={styles.sectionTitle}>Create a Challenge</Text>
           <Text style={styles.sectionSubtitle}>
-            Pick a template, choose how scoring works, and invite friends
+            Pick an icon and color, then choose how scoring works
           </Text>
         </View>
 
         <View style={styles.form}>
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Template</Text>
-            <View style={styles.presetGrid}>
-              {PRESET_ORDER.map((p) => {
-                const cfg = COMPETITION_PRESETS[p];
-                const selected = p === preset;
+            <Text style={styles.label}>Color</Text>
+            <View style={styles.colorRow}>
+              {COMPETITION_COLOR_ORDER.map((c) => {
+                const swatch = COMPETITION_COLORS[c];
+                const selected = color === c;
                 return (
                   <TouchableOpacity
-                    key={p}
+                    key={c}
                     style={[
-                      styles.presetChip,
-                      selected && { backgroundColor: cfg.colorSet[100], borderColor: cfg.colorSet[500] },
+                      styles.colorSwatch,
+                      { backgroundColor: swatch[500] },
+                      selected && styles.colorSwatchSelected,
                     ]}
-                    onPress={() => applyPreset(p)}
+                    onPress={() => setColor(c)}
                     activeOpacity={0.7}
-                  >
-                    <View style={[styles.typeIcon, selected && { backgroundColor: cfg.colorSet[200] }]}>
-                      {PRESET_ICONS[p]}
-                    </View>
-                    <Text style={[styles.typeLabel, selected && { color: cfg.colorSet[700] }]}>
-                      {cfg.label}
-                    </Text>
-                  </TouchableOpacity>
+                    accessibilityRole="button"
+                    accessibilityLabel={`${c} color`}
+                  />
                 );
               })}
+              <TouchableOpacity
+                style={[
+                  styles.colorSwatch,
+                  styles.customColorSwatch,
+                  customColorSelected && styles.colorSwatchSelected,
+                ]}
+                onPress={() => setColorPickerVisible(true)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Custom color"
+              >
+                {customColorSelected ? (
+                  <View style={[styles.customColorFill, { backgroundColor: colorSet[500] }]} />
+                ) : (
+                  <LinearGradient
+                    colors={['#EF4444', '#F97316', '#22C55E', '#3B82F6', '#A855F7', '#EC4899']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.customColorFill}
+                  />
+                )}
+                <View style={styles.customColorIcon}>
+                  <Pipette size={14} color={Colors.text} />
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <ColorPickerModal
+            visible={colorPickerVisible}
+            value={color}
+            onClose={() => setColorPickerVisible(false)}
+            onSelect={setColor}
+          />
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Icon</Text>
+            <View style={styles.iconGrid}>
+              {ICON_ROWS.map((row, rowIndex) => (
+                <View key={rowIndex} style={styles.iconRow}>
+                  {row.map((iconName) => {
+                    const selected = iconName === icon;
+                    return (
+                      <TouchableOpacity
+                        key={iconName}
+                        style={[
+                          styles.iconOption,
+                          selected && {
+                            backgroundColor: colorSet[100],
+                            borderColor: colorSet[500],
+                          },
+                        ]}
+                        onPress={() => setIcon(iconName)}
+                        activeOpacity={0.7}
+                      >
+                        <CompetitionIcon icon={iconName} size={18} colorSet={colorSet} />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
             </View>
           </View>
 
@@ -287,14 +337,14 @@ export default function CreateCompetitionScreen() {
                   style={[
                     styles.modeCard,
                     selected && {
-                      backgroundColor: previewConfig.colorSet[50],
-                      borderColor: previewConfig.colorSet[500],
+                      backgroundColor: colorSet[50],
+                      borderColor: colorSet[500],
                     },
                   ]}
                   onPress={() => setScoringMode(mode)}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.modeLabel, selected && { color: previewConfig.colorSet[700] }]}>
+                  <Text style={[styles.modeLabel, selected && { color: colorSet[700] }]}>
                     {cfg.label}
                   </Text>
                   <Text style={styles.modeSubtitle}>{cfg.subtitle}</Text>
@@ -303,18 +353,28 @@ export default function CreateCompetitionScreen() {
             })}
           </View>
 
-          {SCORING_MODES[scoringMode].requiresUnit && (
+          {(SCORING_MODES[scoringMode].requiresUnit || scoringMode === 'daily') && (
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Unit Label</Text>
+              <Text style={styles.label}>
+                Unit Label{scoringMode === 'daily' ? ' (optional)' : ''}
+              </Text>
               <TextInput
                 style={styles.input}
                 value={unitLabel}
                 onChangeText={setUnitLabel}
-                placeholder="e.g. pages, glasses, pushups"
+                placeholder={
+                  scoringMode === 'daily'
+                    ? 'e.g. pages — leave blank for check-in only'
+                    : 'e.g. pages, glasses, km, hr'
+                }
                 placeholderTextColor={Colors.neutral[400]}
                 maxLength={20}
               />
-              <Text style={styles.hint}>Shown when logging and on the leaderboard</Text>
+              <Text style={styles.hint}>
+                {scoringMode === 'daily'
+                  ? 'Optional — track a daily amount while scoring by streak'
+                  : 'Shown when logging and on the leaderboard. Use hr or min for time-based logging.'}
+              </Text>
             </View>
           )}
 
@@ -324,7 +384,7 @@ export default function CreateCompetitionScreen() {
               style={styles.input}
               value={title}
               onChangeText={setTitle}
-              placeholder={presetConfig.placeholder}
+              placeholder="e.g. Drink 8 glasses of water daily"
               placeholderTextColor={Colors.neutral[400]}
               maxLength={60}
             />
@@ -368,7 +428,7 @@ export default function CreateCompetitionScreen() {
             style={[
               styles.button,
               loading && styles.buttonDisabled,
-              { backgroundColor: previewConfig.colorSet[500] },
+              { backgroundColor: colorSet[500] },
             ]}
             onPress={handleCreate}
             disabled={loading}
@@ -469,34 +529,53 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     color: Colors.neutral[400],
   },
-  presetGrid: {
+  colorRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.sm,
   },
-  presetChip: {
-    width: '48%',
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    backgroundColor: Colors.surface,
-    borderWidth: 2,
-    borderColor: Colors.border,
-    borderRadius: BorderRadius.lg,
-    gap: Spacing.xs,
-  },
-  typeIcon: {
-    width: 40,
-    height: 40,
+  colorSwatch: {
+    width: 36,
+    height: 36,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.neutral[100],
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  colorSwatchSelected: {
+    borderColor: Colors.text,
+  },
+  customColorSwatch: {
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  typeLabel: {
-    fontSize: FontSizes.xs,
-    fontWeight: '600',
-    color: Colors.neutral[500],
+  customColorFill: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  customColorIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconGrid: {
+    gap: ICON_GAP,
+  },
+  iconRow: {
+    flexDirection: 'row',
+    gap: ICON_GAP,
+  },
+  iconOption: {
+    flex: 1,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
   },
   modeCard: {
     backgroundColor: Colors.surface,

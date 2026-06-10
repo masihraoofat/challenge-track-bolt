@@ -34,10 +34,11 @@ export interface Database {
           end_date: string;
           creator_id: string;
           created_at: string;
-          competition_type: string;
           scoring_mode: string;
           unit_label: string | null;
           description: string | null;
+          icon: string;
+          color: string;
           join_code: string;
         };
         Insert: {
@@ -47,10 +48,11 @@ export interface Database {
           end_date: string;
           creator_id: string;
           created_at?: string;
-          competition_type?: string;
           scoring_mode?: string;
           unit_label?: string | null;
           description?: string | null;
+          icon?: string;
+          color?: string;
           join_code?: string;
         };
         Update: {
@@ -60,10 +62,11 @@ export interface Database {
           end_date?: string;
           creator_id?: string;
           created_at?: string;
-          competition_type?: string;
           scoring_mode?: string;
           unit_label?: string | null;
           description?: string | null;
+          icon?: string;
+          color?: string;
           join_code?: string;
         };
       };
@@ -73,18 +76,21 @@ export interface Database {
           user_id: string;
           score: number | string;
           joined_at: string;
+          left_at: string | null;
         };
         Insert: {
           competition_id: string;
           user_id: string;
           score?: number | string;
           joined_at?: string;
+          left_at?: string | null;
         };
         Update: {
           competition_id?: string;
           user_id?: string;
           score?: number | string;
           joined_at?: string;
+          left_at?: string | null;
         };
       };
       daily_logs: {
@@ -162,6 +168,35 @@ export interface Database {
           created_at?: string;
         };
       };
+      goal_logs: {
+        Row: {
+          id: string;
+          goal_id: string;
+          user_id: string;
+          date_logged: string;
+          completed: boolean;
+          value: number | string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          goal_id: string;
+          user_id: string;
+          date_logged?: string;
+          completed?: boolean;
+          value?: number | string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          goal_id?: string;
+          user_id?: string;
+          date_logged?: string;
+          completed?: boolean;
+          value?: number | string | null;
+          created_at?: string;
+        };
+      };
     };
     Functions: {
       increment_score: {
@@ -169,6 +204,24 @@ export interface Database {
           comp_id: string;
           uid: string;
           amount?: number | string;
+        };
+        Returns: undefined;
+      };
+      delete_competition: {
+        Args: {
+          comp_id: string;
+        };
+        Returns: undefined;
+      };
+      join_competition: {
+        Args: {
+          comp_id: string;
+        };
+        Returns: undefined;
+      };
+      leave_competition: {
+        Args: {
+          comp_id: string;
         };
         Returns: undefined;
       };
