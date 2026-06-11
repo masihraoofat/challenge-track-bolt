@@ -1,8 +1,11 @@
 import { Tabs } from 'expo-router';
 import { BookOpen, User, Plus, Target } from 'lucide-react-native';
 import { Colors, FontSizes } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
 
 export default function TabLayout() {
+  const { colors } = useTheme();
+
   return (
     <Tabs
       screenOptions={{
@@ -14,8 +17,8 @@ export default function TabLayout() {
           fontWeight: '600',
         },
         tabBarStyle: {
-          backgroundColor: Colors.surface,
-          borderTopColor: Colors.neutral[200],
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
           borderTopWidth: 1,
           paddingTop: 4,
           paddingBottom: 8,
@@ -58,6 +61,12 @@ export default function TabLayout() {
           tabBarIcon: ({ size, color }) => (
             <User size={size} color={color} />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

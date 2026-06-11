@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,21 +13,36 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
+import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
 import { showToast } from '@/components/Toast';
+import { CompetitionIcon } from '@/components/CompetitionIcon';
+import { ColorPickerModal } from '@/components/ColorPickerModal';
 import { toLocalDateString } from '@/constants/competition';
+import {
+  COMPETITION_COLOR_ORDER,
+  COMPETITION_COLORS,
+  COMPETITION_ICON_ORDER,
+  type CompetitionIcon as CompetitionIconName,
+  resolveCompetitionColorSet,
+} from '@/constants/competition';
+import { isCustomHexColor } from '@/lib/colorUtils';
 import {
   GoalType,
   GoalLogStats,
   GOAL_TYPES,
   GOAL_TYPE_ORDER,
+  DEFAULT_GOAL_COLOR_BY_TYPE,
+  DEFAULT_GOAL_ICON_BY_TYPE,
   computeGoalLogStats,
   formatGoalStat,
   formatGoalTodayValue,
+  getGoalAppearance,
   getGoalCheckInLabel,
   getGoalLogInputType,
   getGoalLogValueLabel,
@@ -44,14 +59,23 @@ import {
   CheckCircle,
   CircleCheck as CheckCircle2,
   Trash2,
+  Pipette,
 } from 'lucide-react-native';
 
 interface Goal {
   id: string;
   name: string;
   goal_type: string;
+  icon: string;
+  color: string;
   created_at: string;
 }
+
+const ICON_GAP = Spacing.sm;
+const ICON_ROWS = [
+  COMPETITION_ICON_ORDER.slice(0, 10),
+  COMPETITION_ICON_ORDER.slice(10, 20),
+] as const;
 
 const TYPE_ICONS: Record<GoalType, React.ReactNode> = {
   streak: <Flame size={20} color={Colors.primary[500]} />,
@@ -69,14 +93,21 @@ const TYPE_ICONS_SMALL: Record<GoalType, React.ReactNode> = {
 
 export default function GoalsScreen() {
   const { user } = useAuth();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [name, setName] = useState('');
   const [goalType, setGoalType] = useState<GoalType>('streak');
+  const [icon, setIcon] = useState<CompetitionIconName>(DEFAULT_GOAL_ICON_BY_TYPE.streak);
+  const [color, setColor] = useState<string>(DEFAULT_GOAL_COLOR_BY_TYPE.streak);
+  const [colorPickerVisible, setColorPickerVisible] = useState(false);
   const [saving, setSaving] = useState(false);
+  const selectedColorSet = resolveCompetitionColorSet(color);
+  const customColorSelected = isCustomHexColor(color);
   const [goalStats, setGoalStats] = useState<Record<string, GoalLogStats>>({});
   const [logInputs, setLogInputs] = useState<
     Record<string, { value: string; hours: string; minutes: string }>
@@ -88,7 +119,7 @@ export default function GoalsScreen() {
 
     const { data, error } = await supabase
       .from('goals')
-      .select('id, name, goal_type, created_at')
+      .select('id, name, goal_type, icon, color, created_at')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -152,7 +183,16 @@ export default function GoalsScreen() {
   const resetForm = () => {
     setName('');
     setGoalType('streak');
+    setIcon(DEFAULT_GOAL_ICON_BY_TYPE.streak);
+    setColor(DEFAULT_GOAL_COLOR_BY_TYPE.streak);
+    setColorPickerVisible(false);
     setSaving(false);
+  };
+
+  const handleGoalTypeChange = (type: GoalType) => {
+    setGoalType(type);
+    setIcon(DEFAULT_GOAL_ICON_BY_TYPE[type]);
+    setColor(DEFAULT_GOAL_COLOR_BY_TYPE[type]);
   };
 
   const handleAddGoal = async () => {
@@ -168,6 +208,8 @@ export default function GoalsScreen() {
       user_id: user.id,
       name: name.trim(),
       goal_type: goalType,
+      icon,
+      color,
     });
 
     if (error) {
@@ -276,7 +318,7 @@ export default function GoalsScreen() {
 
   const renderGoal = ({ item }: { item: Goal }) => {
     const config = getGoalTypeConfig(item.goal_type);
-    const colorSet = config.colorSet;
+    const { icon: goalIcon, colorSet } = getGoalAppearance(item);
     const type = normalizeGoalType(item.goal_type);
     const stats = goalStats[item.id] ?? {
       checkedInToday: false,
@@ -306,7 +348,9 @@ export default function GoalsScreen() {
           </TouchableOpacity>
         </View>
         <View style={styles.cardBody}>
-          {TYPE_ICONS[type]}
+          <View style={[styles.goalIconWrap, { backgroundColor: colorSet[100] }]}>
+            <CompetitionIcon icon={goalIcon} size={20} colorSet={colorSet} shade={500} />
+          </View>
           <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
         </View>
         <Text style={[styles.statText, { color: colorSet[600] }]}>
@@ -477,8 +521,95 @@ export default function GoalsScreen() {
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>New Goal</Text>
               <Text style={styles.modalSubtitle}>
-                Give your goal a name and choose how you want to track it
+                Pick an icon and color, then choose how you want to track it
               </Text>
+
+              <View style={styles.modalPreview}>
+                <View style={[styles.modalPreviewIcon, { backgroundColor: selectedColorSet[100] }]}>
+                  <CompetitionIcon icon={icon} size={28} colorSet={selectedColorSet} shade={500} />
+                </View>
+              </View>
+
+              <Text style={styles.inputLabel}>Color</Text>
+              <View style={styles.colorRow}>
+                {COMPETITION_COLOR_ORDER.map((c) => {
+                  const swatch = COMPETITION_COLORS[c];
+                  const selected = color === c;
+                  return (
+                    <TouchableOpacity
+                      key={c}
+                      style={[
+                        styles.colorSwatch,
+                        { backgroundColor: swatch[500] },
+                        selected && styles.colorSwatchSelected,
+                      ]}
+                      onPress={() => setColor(c)}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${c} color`}
+                    />
+                  );
+                })}
+                <TouchableOpacity
+                  style={[
+                    styles.colorSwatch,
+                    styles.customColorSwatch,
+                    customColorSelected && styles.colorSwatchSelected,
+                  ]}
+                  onPress={() => setColorPickerVisible(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Custom color"
+                >
+                  {customColorSelected ? (
+                    <View style={[styles.customColorFill, { backgroundColor: selectedColorSet[500] }]} />
+                  ) : (
+                    <LinearGradient
+                      colors={['#EF4444', '#F97316', '#22C55E', '#3B82F6', '#A855F7', '#EC4899']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.customColorFill}
+                    />
+                  )}
+                  <View style={styles.customColorIcon}>
+                    <Pipette size={14} color={colors.text} />
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              <ColorPickerModal
+                visible={colorPickerVisible}
+                value={color}
+                onClose={() => setColorPickerVisible(false)}
+                onSelect={setColor}
+              />
+
+              <Text style={styles.inputLabel}>Icon</Text>
+              <View style={styles.iconGrid}>
+                {ICON_ROWS.map((row, rowIndex) => (
+                  <View key={rowIndex} style={styles.iconRow}>
+                    {row.map((iconName) => {
+                      const selected = iconName === icon;
+                      return (
+                        <TouchableOpacity
+                          key={iconName}
+                          style={[
+                            styles.iconOption,
+                            selected && {
+                              backgroundColor: selectedColorSet[100],
+                              borderColor: selectedColorSet[500],
+                            },
+                          ]}
+                          onPress={() => setIcon(iconName)}
+                          activeOpacity={0.7}
+                        >
+                          <CompetitionIcon icon={iconName} size={18} colorSet={selectedColorSet} />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
 
               <Text style={styles.inputLabel}>Name</Text>
               <TextInput
@@ -506,7 +637,7 @@ export default function GoalsScreen() {
                           backgroundColor: colorSet[50],
                         },
                       ]}
-                      onPress={() => setGoalType(type)}
+                      onPress={() => handleGoalTypeChange(type)}
                       activeOpacity={0.7}
                     >
                       <View style={[styles.typeOptionIcon, { backgroundColor: colorSet[100] }]}>
@@ -553,16 +684,17 @@ export default function GoalsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   header: {
     paddingHorizontal: Spacing.lg,
@@ -571,11 +703,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: FontSizes.xxl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
   },
   subtitle: {
     fontSize: FontSizes.md,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     marginTop: Spacing.xs,
   },
   list: {
@@ -583,12 +715,12 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   card: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg,
     padding: Spacing.lg,
     marginBottom: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.neutral[100],
+    borderColor: colors.mutedBorder,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
@@ -622,23 +754,30 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     marginBottom: Spacing.xs,
   },
+  goalIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   cardTitle: {
     flex: 1,
     fontSize: FontSizes.lg,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
   },
   statText: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
-    marginLeft: 28,
+    marginLeft: 44,
     marginBottom: Spacing.md,
   },
   logSection: {
     marginTop: Spacing.xs,
     paddingTop: Spacing.md,
     borderTopWidth: 1,
-    borderTopColor: Colors.neutral[100],
+    borderTopColor: colors.mutedBorder,
   },
   valueInputGroup: {
     marginBottom: Spacing.md,
@@ -646,18 +785,18 @@ const styles = StyleSheet.create({
   valueLabel: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.sm,
   },
   valueInput: {
-    backgroundColor: Colors.neutral[50],
+    backgroundColor: colors.background,
     borderWidth: 1,
-    borderColor: Colors.neutral[200],
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     fontSize: FontSizes.md,
-    color: Colors.text,
+    color: colors.text,
   },
   durationInputRow: {
     flexDirection: 'row',
@@ -667,9 +806,9 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.neutral[50],
+    backgroundColor: colors.background,
     borderWidth: 1,
-    borderColor: Colors.neutral[200],
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
   },
@@ -677,11 +816,11 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: Spacing.md,
     fontSize: FontSizes.md,
-    color: Colors.text,
+    color: colors.text,
   },
   durationUnit: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   loggedTodayCard: {
@@ -694,7 +833,7 @@ const styles = StyleSheet.create({
   },
   loggedTodayLabel: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   loggedTodayValue: {
@@ -725,7 +864,7 @@ const styles = StyleSheet.create({
     width: 96,
     height: 96,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.neutral[100],
+    backgroundColor: colors.muted,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: Spacing.lg,
@@ -733,12 +872,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: FontSizes.xl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.sm,
   },
   emptySubtitle: {
     fontSize: FontSizes.md,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: Spacing.xl,
   },
@@ -782,7 +921,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
     padding: Spacing.lg,
@@ -791,29 +930,90 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: FontSizes.xl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.xs,
   },
   modalSubtitle: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     marginBottom: Spacing.lg,
+  },
+  modalPreview: {
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  modalPreviewIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: BorderRadius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  colorSwatch: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.full,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  colorSwatchSelected: {
+    borderColor: colors.text,
+  },
+  customColorSwatch: {
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customColorFill: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  customColorIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconGrid: {
+    gap: ICON_GAP,
+    marginBottom: Spacing.lg,
+  },
+  iconRow: {
+    flexDirection: 'row',
+    gap: ICON_GAP,
+  },
+  iconOption: {
+    flex: 1,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 2,
+    borderColor: colors.border,
+    borderRadius: BorderRadius.md,
   },
   inputLabel: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.sm,
   },
   modalInput: {
-    backgroundColor: Colors.neutral[50],
+    backgroundColor: colors.background,
     borderWidth: 1,
-    borderColor: Colors.neutral[200],
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     fontSize: FontSizes.md,
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.lg,
   },
   typeGrid: {
@@ -827,8 +1027,8 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     borderRadius: BorderRadius.md,
     borderWidth: 2,
-    borderColor: Colors.neutral[200],
-    backgroundColor: Colors.surface,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
   typeOptionIcon: {
     width: 36,
@@ -841,12 +1041,12 @@ const styles = StyleSheet.create({
   typeOptionLabel: {
     fontSize: FontSizes.sm,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: 2,
   },
   typeOptionDesc: {
     fontSize: FontSizes.xs,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   modalButtons: {
@@ -858,7 +1058,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: Spacing.md,
     borderRadius: BorderRadius.md,
-    backgroundColor: Colors.neutral[100],
+    backgroundColor: colors.muted,
     alignItems: 'center',
   },
   modalCancelText: {
@@ -882,3 +1082,4 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 });
+}

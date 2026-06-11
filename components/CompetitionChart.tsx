@@ -6,6 +6,7 @@ import {
   type CompetitionColorSet,
 } from '@/constants/competition';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
 import {
   buildCompetitionChartData,
   getChartSubtitle,
@@ -23,11 +24,6 @@ interface CompetitionChartProps {
   height?: number;
 }
 
-const axisTextStyle = {
-  color: Colors.neutral[500],
-  fontSize: FontSizes.xs,
-};
-
 export function CompetitionChart({
   config,
   logs,
@@ -37,7 +33,70 @@ export function CompetitionChart({
   colorSet,
   height = 220,
 }: CompetitionChartProps) {
+  const { colors } = useTheme();
   const { width: windowWidth } = useWindowDimensions();
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        card: {
+          marginHorizontal: Spacing.lg,
+          marginBottom: Spacing.lg,
+          borderRadius: BorderRadius.lg,
+          padding: Spacing.lg,
+          borderWidth: 1,
+          borderColor: colors.mutedBorder,
+        },
+        title: {
+          fontSize: FontSizes.lg,
+          fontWeight: '700',
+          color: colors.text,
+          marginBottom: Spacing.xs,
+        },
+        subtitle: {
+          fontSize: FontSizes.sm,
+          color: colors.textSecondary,
+          marginBottom: Spacing.md,
+        },
+        emptyText: {
+          fontSize: FontSizes.sm,
+          color: Colors.neutral[400],
+          textAlign: 'center',
+          paddingVertical: Spacing.lg,
+        },
+        legend: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: Spacing.sm,
+          marginTop: Spacing.md,
+        },
+        legendItem: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: Spacing.xs,
+          maxWidth: '48%',
+        },
+        legendDot: {
+          width: 8,
+          height: 8,
+          borderRadius: BorderRadius.full,
+        },
+        legendText: {
+          fontSize: FontSizes.xs,
+          color: colors.textSecondary,
+          flexShrink: 1,
+        },
+      }),
+    [colors],
+  );
+
+  const axisTextStyle = useMemo(
+    () => ({
+      color: colors.textSecondary,
+      fontSize: FontSizes.xs,
+    }),
+    [colors.textSecondary],
+  );
 
   const chartData = useMemo(
     () =>
@@ -54,6 +113,8 @@ export function CompetitionChart({
 
   const subtitle = getChartSubtitle(config);
   const chartWidth = Math.max(windowWidth - Spacing.lg * 4, 280);
+  const axisColor = colors.border;
+  const rulesColor = colors.muted;
 
   if (chartData.isEmpty) {
     return (
@@ -89,8 +150,8 @@ export function CompetitionChart({
             maxValue={chartData.maxValue}
             yAxisThickness={0}
             xAxisThickness={1}
-            xAxisColor={Colors.neutral[200]}
-            rulesColor={Colors.neutral[100]}
+            xAxisColor={axisColor}
+            rulesColor={rulesColor}
             rulesType="solid"
             yAxisTextStyle={axisTextStyle}
             xAxisLabelTextStyle={axisTextStyle}
@@ -127,8 +188,8 @@ export function CompetitionChart({
           maxValue={Math.ceil(chartData.maxValue * 1.1)}
           yAxisThickness={0}
           xAxisThickness={1}
-          xAxisColor={Colors.neutral[200]}
-          rulesColor={Colors.neutral[100]}
+          xAxisColor={axisColor}
+          rulesColor={rulesColor}
           rulesType="solid"
           yAxisTextStyle={axisTextStyle}
           xAxisLabelTextStyle={axisTextStyle}
@@ -147,53 +208,3 @@ export function CompetitionChart({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  card: {
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.neutral[100],
-  },
-  title: {
-    fontSize: FontSizes.lg,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: Spacing.xs,
-  },
-  subtitle: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
-    marginBottom: Spacing.md,
-  },
-  emptyText: {
-    fontSize: FontSizes.sm,
-    color: Colors.neutral[400],
-    textAlign: 'center',
-    paddingVertical: Spacing.lg,
-  },
-  legend: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-    marginTop: Spacing.md,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    maxWidth: '48%',
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: BorderRadius.full,
-  },
-  legendText: {
-    fontSize: FontSizes.xs,
-    color: Colors.neutral[600],
-    flexShrink: 1,
-  },
-});

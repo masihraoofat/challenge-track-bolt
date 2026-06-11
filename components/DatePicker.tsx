@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
-import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
+import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
 
 interface DatePickerProps {
   value: string;
@@ -22,6 +23,8 @@ function toISO(year: number, month: number, day: number): string {
 }
 
 export default function DatePicker({ value, onChange, minDate, maxDate, label }: DatePickerProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const initial = value ? new Date(value + 'T00:00:00') : new Date();
   const [viewMonth, setViewMonth] = useState(initial.getMonth());
   const [viewYear, setViewYear] = useState(initial.getFullYear());
@@ -84,11 +87,11 @@ export default function DatePicker({ value, onChange, minDate, maxDate, label }:
         <View style={styles.calendar}>
           <View style={styles.calHeader}>
             <TouchableOpacity onPress={prevMonth} style={styles.calNav}>
-              <ChevronLeft size={20} color={Colors.text} />
+              <ChevronLeft size={20} color={colors.text} />
             </TouchableOpacity>
             <Text style={styles.calMonth}>{monthLabel}</Text>
             <TouchableOpacity onPress={nextMonth} style={styles.calNav}>
-              <ChevronRight size={20} color={Colors.text} />
+              <ChevronRight size={20} color={colors.text} />
             </TouchableOpacity>
           </View>
 
@@ -144,36 +147,37 @@ export default function DatePicker({ value, onChange, minDate, maxDate, label }:
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   wrapper: {
     gap: Spacing.xs,
   },
   label: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
-    color: Colors.neutral[700],
+    color: colors.text,
   },
   trigger: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
   },
   triggerText: {
     fontSize: FontSizes.md,
-    color: Colors.text,
+    color: colors.text,
   },
   placeholder: {
     color: Colors.neutral[400],
   },
   calendar: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg,
     padding: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: colors.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
@@ -196,7 +200,7 @@ const styles = StyleSheet.create({
   calMonth: {
     fontSize: FontSizes.md,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
   },
   dayHeaders: {
     flexDirection: 'row',
@@ -231,7 +235,7 @@ const styles = StyleSheet.create({
   },
   dayText: {
     fontSize: FontSizes.sm,
-    color: Colors.text,
+    color: colors.text,
     fontWeight: '500',
   },
   dayTextSelected: {
@@ -246,3 +250,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+}

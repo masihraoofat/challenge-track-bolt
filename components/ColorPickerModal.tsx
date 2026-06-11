@@ -3,13 +3,15 @@ import {
   View,
   Text,
   TouchableOpacity,
+  Pressable,
   StyleSheet,
   PanResponder,
 } from 'react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { X } from 'lucide-react-native';
-import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
+import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
 import { COMPETITION_COLORS, isPresetColor } from '@/constants/competition';
 import { buildColorSetFromHex, hexToHue, hueToHex, isCustomHexColor } from '@/lib/colorUtils';
 
@@ -45,6 +47,8 @@ function resolveInitialHue(value: string): number {
 }
 
 export function ColorPickerModal({ visible, value, onClose, onSelect }: ColorPickerModalProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [hue, setHue] = useState(30);
   const [trackWidth, setTrackWidth] = useState(0);
   const trackWidthRef = useRef(0);
@@ -87,13 +91,14 @@ export function ColorPickerModal({ visible, value, onClose, onSelect }: ColorPic
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close color picker" />
         <View style={styles.sheet}>
           <View style={styles.header}>
             <Text style={styles.title}>Pick a Color</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={12}>
-              <X size={22} color={Colors.text} />
+              <X size={22} color={colors.text} />
             </TouchableOpacity>
           </View>
 
@@ -144,14 +149,18 @@ export function ColorPickerModal({ visible, value, onClose, onSelect }: ColorPic
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   overlay: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   sheet: {
-    backgroundColor: Colors.background,
+    backgroundColor: colors.surface,
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
     paddingHorizontal: Spacing.lg,
@@ -167,7 +176,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: FontSizes.lg,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
   },
   closeButton: {
     width: 36,
@@ -198,7 +207,7 @@ const styles = StyleSheet.create({
   },
   previewLabel: {
     fontSize: FontSizes.xs,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -210,7 +219,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
-    color: Colors.neutral[700],
+    color: colors.text,
     marginBottom: Spacing.sm,
   },
   spectrumWrap: {
@@ -237,7 +246,7 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: FontSizes.xs,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     marginBottom: Spacing.lg,
   },
   doneButton: {
@@ -251,3 +260,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+}

@@ -1,19 +1,111 @@
+import { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
+import { useTheme } from '@/hooks/useTheme';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
-import { showToast } from '@/components/Toast';
-import { User, LogOut, BookOpen, Trophy, Flame } from 'lucide-react-native';
+import { User, BookOpen, Trophy, Flame, Settings } from 'lucide-react-native';
 import { useState, useCallback } from 'react';
-import { useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { computeStreakFromDates } from '@/constants/competition';
 
 export default function ProfileScreen() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
+  const { colors } = useTheme();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [stats, setStats] = useState({ competitions: 0, daysLogged: 0, currentStreak: 0 });
   const [loading, setLoading] = useState(true);
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          flex: 1,
+          backgroundColor: colors.background,
+        },
+        header: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: Spacing.lg,
+          paddingBottom: Spacing.md,
+        },
+        headerTitle: {
+          fontSize: FontSizes.xxl,
+          fontWeight: '700',
+          color: colors.text,
+        },
+        settingsButton: {
+          width: 40,
+          height: 40,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: BorderRadius.full,
+          backgroundColor: colors.muted,
+        },
+        profileCard: {
+          alignItems: 'center',
+          paddingVertical: Spacing.xl,
+          marginHorizontal: Spacing.lg,
+          backgroundColor: colors.surface,
+          borderRadius: BorderRadius.xl,
+          borderWidth: 1,
+          borderColor: colors.mutedBorder,
+          marginBottom: Spacing.lg,
+        },
+        avatar: {
+          width: 80,
+          height: 80,
+          borderRadius: BorderRadius.full,
+          backgroundColor: Colors.primary[100],
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: Spacing.md,
+        },
+        username: {
+          fontSize: FontSizes.xl,
+          fontWeight: '700',
+          color: colors.text,
+        },
+        email: {
+          fontSize: FontSizes.sm,
+          color: colors.textSecondary,
+          marginTop: Spacing.xs,
+        },
+        loader: {
+          marginTop: Spacing.xl,
+        },
+        statsGrid: {
+          flexDirection: 'row',
+          gap: Spacing.md,
+          paddingHorizontal: Spacing.lg,
+        },
+        statCard: {
+          flex: 1,
+          backgroundColor: colors.surface,
+          borderRadius: BorderRadius.lg,
+          paddingVertical: Spacing.lg,
+          paddingHorizontal: Spacing.sm,
+          alignItems: 'center',
+          gap: Spacing.sm,
+          borderWidth: 1,
+          borderColor: colors.mutedBorder,
+        },
+        statValue: {
+          fontSize: FontSizes.xxl,
+          fontWeight: '700',
+          color: colors.text,
+        },
+        statLabel: {
+          fontSize: FontSizes.xs,
+          color: colors.textSecondary,
+          fontWeight: '500',
+        },
+      }),
+    [colors],
+  );
 
   const fetchStats = useCallback(async () => {
     if (!user) return;
@@ -58,17 +150,18 @@ export default function ProfileScreen() {
     }, [fetchStats]),
   );
 
-  const handleSignOut = async () => {
-    await signOut();
-    showToast('Logged out successfully', 'info');
-  };
-
   const username = user?.user_metadata?.username || user?.email?.split('@')[0] || 'Reader';
 
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
         <Text style={styles.headerTitle}>Profile</Text>
+        <TouchableOpacity
+          style={styles.settingsButton}
+          onPress={() => router.push('/settings')}
+        >
+          <Settings size={22} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.profileCard}>
@@ -100,109 +193,6 @@ export default function ProfileScreen() {
           </View>
         </View>
       )}
-
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-          <LogOut size={20} color={Colors.error[500]} />
-          <Text style={styles.signOutText}>Sign Out</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  header: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.xl,
-    paddingBottom: Spacing.md,
-  },
-  headerTitle: {
-    fontSize: FontSizes.xxl,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  profileCard: {
-    alignItems: 'center',
-    paddingVertical: Spacing.xl,
-    marginHorizontal: Spacing.lg,
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.neutral[100],
-    marginBottom: Spacing.lg,
-  },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.primary[100],
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.md,
-  },
-  username: {
-    fontSize: FontSizes.xl,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  email: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
-    marginTop: Spacing.xs,
-  },
-  loader: {
-    marginTop: Spacing.xl,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.sm,
-    alignItems: 'center',
-    gap: Spacing.sm,
-    borderWidth: 1,
-    borderColor: Colors.neutral[100],
-  },
-  statValue: {
-    fontSize: FontSizes.xxl,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  statLabel: {
-    fontSize: FontSizes.xs,
-    color: Colors.textSecondary,
-    fontWeight: '500',
-  },
-  footer: {
-    marginTop: 'auto',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.xxl,
-  },
-  signOutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.error[50],
-    borderWidth: 1,
-    borderColor: Colors.error[100],
-  },
-  signOutText: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-    color: Colors.error[500],
-  },
-});

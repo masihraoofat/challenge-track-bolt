@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
+import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
 import { showToast } from '@/components/Toast';
 import { ArrowLeft, Copy, Pipette } from 'lucide-react-native';
 import DatePicker from '@/components/DatePicker';
@@ -42,7 +43,9 @@ const ICON_ROWS = [
 export default function CreateCompetitionScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const createdCodeRef = useRef<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -180,7 +183,7 @@ export default function CreateCompetitionScreen() {
       <View style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={handleDone} style={styles.backButton}>
-            <ArrowLeft size={24} color={Colors.text} />
+            <ArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Competition Created!</Text>
           <View style={{ width: 40 }} />
@@ -224,7 +227,7 @@ export default function CreateCompetitionScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <ArrowLeft size={24} color={Colors.text} />
+            <ArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>New Competition</Text>
           <View style={{ width: 40 }} />
@@ -284,7 +287,7 @@ export default function CreateCompetitionScreen() {
                   />
                 )}
                 <View style={styles.customColorIcon}>
-                  <Pipette size={14} color={Colors.text} />
+                  <Pipette size={14} color={colors.text} />
                 </View>
               </TouchableOpacity>
             </View>
@@ -445,10 +448,11 @@ export default function CreateCompetitionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   scrollContent: {
     flexGrow: 1,
@@ -471,7 +475,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: FontSizes.lg,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
   },
   iconSection: {
     alignItems: 'center',
@@ -490,12 +494,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: FontSizes.xl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.xs,
   },
   sectionSubtitle: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
   },
@@ -509,17 +513,17 @@ const styles = StyleSheet.create({
   label: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
-    color: Colors.neutral[700],
+    color: colors.text,
   },
   input: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     fontSize: FontSizes.md,
-    color: Colors.text,
+    color: colors.text,
   },
   textArea: {
     minHeight: 80,
@@ -542,7 +546,7 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   colorSwatchSelected: {
-    borderColor: Colors.text,
+    borderColor: colors.text,
   },
   customColorSwatch: {
     overflow: 'hidden',
@@ -572,15 +576,15 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderWidth: 2,
-    borderColor: Colors.border,
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
   },
   modeCard: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderWidth: 2,
-    borderColor: Colors.border,
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
@@ -589,7 +593,7 @@ const styles = StyleSheet.create({
   modeLabel: {
     fontSize: FontSizes.sm,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
   },
   modeSubtitle: {
     fontSize: FontSizes.xs,
@@ -634,18 +638,18 @@ const styles = StyleSheet.create({
   successTitle: {
     fontSize: FontSizes.xxl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.sm,
   },
   successSubtitle: {
     fontSize: FontSizes.md,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: Spacing.xl,
   },
   codeCard: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg,
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
@@ -691,3 +695,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+}

@@ -1,5 +1,14 @@
 import { Colors } from './theme';
-import { computeStreakFromDates, formatDuration, parseScreenTimeLog, toScoreNumber } from './competition';
+import {
+  type CompetitionColorSet,
+  type CompetitionIcon,
+  COMPETITION_ICON_ORDER,
+  computeStreakFromDates,
+  formatDuration,
+  parseScreenTimeLog,
+  resolveCompetitionColorSet,
+  toScoreNumber,
+} from './competition';
 
 export type GoalType = 'streak' | 'amount' | 'time' | 'checkin';
 export type GoalLogInputType = 'checkin' | 'number' | 'duration';
@@ -48,6 +57,43 @@ export const GOAL_TYPES: Record<GoalType, GoalTypeConfig> = {
 };
 
 export const GOAL_TYPE_ORDER: GoalType[] = ['streak', 'amount', 'time', 'checkin'];
+
+export const DEFAULT_GOAL_ICON_BY_TYPE: Record<GoalType, CompetitionIcon> = {
+  streak: 'flame',
+  amount: 'target',
+  time: 'clock',
+  checkin: 'activity',
+};
+
+export const DEFAULT_GOAL_COLOR_BY_TYPE: Record<GoalType, string> = {
+  streak: 'primary',
+  amount: 'blue',
+  time: 'teal',
+  checkin: 'success',
+};
+
+export interface GoalRow {
+  goal_type: string;
+  icon?: string | null;
+  color?: string | null;
+}
+
+function normalizeGoalIcon(icon: string | null | undefined, type: GoalType): CompetitionIcon {
+  if (icon && COMPETITION_ICON_ORDER.includes(icon as CompetitionIcon)) {
+    return icon as CompetitionIcon;
+  }
+  return DEFAULT_GOAL_ICON_BY_TYPE[type];
+}
+
+export function getGoalAppearance(goal: GoalRow): {
+  icon: CompetitionIcon;
+  colorSet: CompetitionColorSet;
+} {
+  const type = normalizeGoalType(goal.goal_type);
+  const icon = normalizeGoalIcon(goal.icon, type);
+  const colorSet = resolveCompetitionColorSet(goal.color || DEFAULT_GOAL_COLOR_BY_TYPE[type]);
+  return { icon, colorSet };
+}
 
 export function getGoalTypeConfig(type: string): GoalTypeConfig {
   if (type in GOAL_TYPES) {

@@ -4,15 +4,17 @@ import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import { ToastContainer } from '@/components/Toast';
 import { Colors } from '@/constants/theme';
 
 function RootNavigator() {
   const { session, loading, isRecovery } = useAuth();
+  const { colors, isDark } = useTheme();
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={Colors.primary[500]} />
       </View>
     );
@@ -33,16 +35,23 @@ function RootNavigator() {
   );
 }
 
+function StatusBarThemed() {
+  const { isDark } = useTheme();
+  return <StatusBar style={isDark ? 'light' : 'dark'} />;
+}
+
 export default function RootLayout() {
   useFrameworkReady();
 
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <RootNavigator />
-        <ToastContainer />
-        <StatusBar style="dark" />
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <RootNavigator />
+          <ToastContainer />
+          <StatusBarThemed />
+        </AuthProvider>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
@@ -52,6 +61,5 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
   },
 });

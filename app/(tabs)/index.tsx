@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
+import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
 import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn } from 'lucide-react-native';
 import { showToast } from '@/components/Toast';
 import { CompetitionIcon } from '@/components/CompetitionIcon';
@@ -52,8 +53,10 @@ interface CompetitionWithParticipation {
 
 export default function HomeScreen() {
   const { user } = useAuth();
+  const { colors } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [competitions, setCompetitions] = useState<CompetitionWithParticipation[]>([]);
   const [streaks, setStreaks] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -497,16 +500,17 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   header: {
     flexDirection: 'row',
@@ -519,11 +523,11 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: FontSizes.xxl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
   },
   subGreeting: {
     fontSize: FontSizes.md,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     marginTop: Spacing.xs,
   },
   joinButton: {
@@ -545,7 +549,7 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   card: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg,
     padding: Spacing.lg,
     marginBottom: Spacing.md,
@@ -555,7 +559,7 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2,
     borderWidth: 1,
-    borderColor: Colors.neutral[100],
+    borderColor: colors.mutedBorder,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -589,7 +593,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.success[100],
   },
   statusEnded: {
-    backgroundColor: Colors.neutral[100],
+    backgroundColor: colors.muted,
   },
   statusText: {
     fontSize: FontSizes.xs,
@@ -616,11 +620,11 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: FontSizes.lg,
     fontWeight: '600',
-    color: Colors.text,
+    color: colors.text,
   },
   cardDescription: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 18,
     marginTop: Spacing.xs,
   },
@@ -677,7 +681,7 @@ const styles = StyleSheet.create({
   },
   progressBarBg: {
     height: 6,
-    backgroundColor: Colors.neutral[100],
+    backgroundColor: colors.progressTrack,
     borderRadius: BorderRadius.full,
     overflow: 'hidden',
   },
@@ -692,7 +696,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     paddingTop: Spacing.md,
     borderTopWidth: 1,
-    borderTopColor: Colors.neutral[100],
+    borderTopColor: colors.mutedBorder,
   },
   daysText: {
     fontSize: FontSizes.sm,
@@ -708,7 +712,7 @@ const styles = StyleSheet.create({
     width: 96,
     height: 96,
     borderRadius: BorderRadius.xl,
-    backgroundColor: Colors.neutral[100],
+    backgroundColor: colors.muted,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: Spacing.lg,
@@ -716,12 +720,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: FontSizes.xl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.sm,
   },
   emptySubtitle: {
     fontSize: FontSizes.md,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 22,
   },
@@ -784,7 +788,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
     padding: Spacing.xl,
@@ -793,25 +797,25 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: FontSizes.xl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.xs,
   },
   modalSubtitle: {
     fontSize: FontSizes.md,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     marginBottom: Spacing.lg,
     lineHeight: 22,
   },
   modalInput: {
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     fontSize: FontSizes.lg,
     fontWeight: '600',
-    color: Colors.text,
+    color: colors.text,
     letterSpacing: 2,
     textAlign: 'center',
     marginBottom: Spacing.lg,
@@ -826,7 +830,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: BorderRadius.md,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: colors.border,
   },
   modalCancelText: {
     fontSize: FontSizes.md,
@@ -849,3 +853,4 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 });
+}

@@ -100,6 +100,39 @@ export const Colors = {
   border: '#E7E5E4',
 };
 
+export interface ThemeColors {
+  background: string;
+  surface: string;
+  text: string;
+  textSecondary: string;
+  border: string;
+  muted: string;
+  mutedBorder: string;
+  progressTrack: string;
+}
+
+export const lightTheme: ThemeColors = {
+  background: Colors.background,
+  surface: Colors.surface,
+  text: Colors.text,
+  textSecondary: Colors.textSecondary,
+  border: Colors.border,
+  muted: Colors.neutral[100],
+  mutedBorder: Colors.neutral[100],
+  progressTrack: Colors.neutral[100],
+};
+
+export const darkTheme: ThemeColors = {
+  background: Colors.neutral[900],
+  surface: Colors.neutral[800],
+  text: Colors.neutral[50],
+  textSecondary: Colors.neutral[400],
+  border: Colors.neutral[700],
+  muted: Colors.neutral[800],
+  mutedBorder: Colors.neutral[700],
+  progressTrack: Colors.neutral[600],
+};
+
 export const Spacing = {
   xs: 4,
   sm: 8,

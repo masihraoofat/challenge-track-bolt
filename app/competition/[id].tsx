@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
+import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
 import { showToast } from '@/components/Toast';
 import { CompetitionIcon } from '@/components/CompetitionIcon';
 import { CompetitionChart } from '@/components/CompetitionChart';
@@ -78,7 +79,9 @@ export default function CompetitionDetailScreen() {
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
   const router = useRouter();
   const { user } = useAuth();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [competition, setCompetition] = useState<CompetitionDetail | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
@@ -567,7 +570,7 @@ export default function CompetitionDetailScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <ArrowLeft size={24} color={Colors.text} />
+          <ArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleRow}>
           <CompetitionIcon icon={config.icon} size={18} colorSet={colorSet} />
@@ -889,10 +892,11 @@ export default function CompetitionDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   list: {
     flex: 1,
@@ -901,7 +905,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   errorText: {
     fontSize: FontSizes.md,
@@ -914,7 +918,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.xl,
     paddingBottom: Spacing.md,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
     zIndex: 1,
   },
   backButton: {
@@ -948,7 +952,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: FontSizes.lg,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     flex: 1,
   },
   infoSection: {
@@ -976,7 +980,7 @@ const styles = StyleSheet.create({
   },
   descriptionText: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 20,
     marginBottom: Spacing.lg,
   },
@@ -992,7 +996,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.md,
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderRadius: BorderRadius.md,
     paddingVertical: Spacing.md,
@@ -1031,17 +1035,17 @@ const styles = StyleSheet.create({
   valueLabel: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
-    color: Colors.neutral[700],
+    color: colors.text,
   },
   valueInput: {
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     fontSize: FontSizes.lg,
-    color: Colors.text,
+    color: colors.text,
     fontWeight: '600',
   },
   valueUnit: {
@@ -1056,9 +1060,9 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: colors.border,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
@@ -1067,7 +1071,7 @@ const styles = StyleSheet.create({
   durationInput: {
     flex: 1,
     fontSize: FontSizes.lg,
-    color: Colors.text,
+    color: colors.text,
     fontWeight: '600',
     padding: 0,
   },
@@ -1126,7 +1130,7 @@ const styles = StyleSheet.create({
   leaderboardTitle: {
     fontSize: FontSizes.xl,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
   },
   listContent: {
     paddingBottom: Spacing.lg,
@@ -1134,14 +1138,14 @@ const styles = StyleSheet.create({
   leaderboardRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.md,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.lg,
     marginHorizontal: Spacing.lg,
     marginBottom: Spacing.sm,
     borderWidth: 1,
-    borderColor: Colors.neutral[100],
+    borderColor: colors.mutedBorder,
   },
   currentUserRow: {
     borderColor: Colors.primary[200],
@@ -1169,7 +1173,7 @@ const styles = StyleSheet.create({
   username: {
     fontSize: FontSizes.md,
     fontWeight: '500',
-    color: Colors.text,
+    color: colors.text,
   },
   currentUsername: {
     fontWeight: '700',
@@ -1191,7 +1195,7 @@ const styles = StyleSheet.create({
   },
   scoreBarBg: {
     height: 4,
-    backgroundColor: Colors.neutral[100],
+    backgroundColor: colors.progressTrack,
     borderRadius: BorderRadius.full,
     overflow: 'hidden',
   },
@@ -1227,19 +1231,19 @@ const styles = StyleSheet.create({
   deleteModalContent: {
     width: '100%',
     maxWidth: 340,
-    backgroundColor: Colors.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.xl,
     padding: Spacing.lg,
   },
   deleteModalTitle: {
     fontSize: FontSizes.lg,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.sm,
   },
   deleteModalMessage: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 20,
     marginBottom: Spacing.lg,
   },
@@ -1251,7 +1255,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: Spacing.md,
     borderRadius: BorderRadius.md,
-    backgroundColor: Colors.neutral[100],
+    backgroundColor: colors.muted,
     alignItems: 'center',
   },
   deleteModalCancelText: {
@@ -1290,12 +1294,12 @@ const styles = StyleSheet.create({
   rejoinTitle: {
     fontSize: FontSizes.md,
     fontWeight: '700',
-    color: Colors.text,
+    color: colors.text,
     marginBottom: Spacing.xs,
   },
   rejoinMessage: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 20,
     marginBottom: Spacing.md,
   },
@@ -1311,7 +1315,7 @@ const styles = StyleSheet.create({
   },
   rejoinEndedText: {
     fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     fontStyle: 'italic',
   },
   leaveFooter: {
@@ -1343,3 +1347,4 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 });
+}
