@@ -23,10 +23,12 @@ import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn } from 'lucide-react-n
 import { showToast } from '@/components/Toast';
 import { CompetitionIcon } from '@/components/CompetitionIcon';
 import {
+  aggregateLogScore,
   computeStreakFromDates,
   formatLeaderboardScore,
   getCompetitionConfig,
   resolveCompetitionScore,
+  toLocalDateString,
   toScoreNumber,
 } from '@/constants/competition';
 
@@ -47,6 +49,7 @@ interface CompetitionWithParticipation {
   color?: string | null;
   scoring_mode?: string;
   unit_label?: string | null;
+  score_limit?: number | null;
   description?: string | null;
   participants: ParticipantInfo[];
 }
@@ -96,7 +99,7 @@ export default function HomeScreen() {
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+    const thirtyDaysAgoStr = toLocalDateString(thirtyDaysAgo);
 
     const [compResult, logsResult] = await Promise.all([
       supabase
@@ -123,15 +126,14 @@ export default function HomeScreen() {
     const compData = compResult.data || [];
     setCompetitions(compData);
 
-    const logTotalsByComp: Record<string, { total: number; count: number }> = {};
+    const logsByComp: Record<string, { value: unknown }[]> = {};
     const byComp: Record<string, Set<string>> = {};
 
     (logsResult.data || []).forEach((log) => {
-      if (!logTotalsByComp[log.competition_id]) {
-        logTotalsByComp[log.competition_id] = { total: 0, count: 0 };
+      if (!logsByComp[log.competition_id]) {
+        logsByComp[log.competition_id] = [];
       }
-      logTotalsByComp[log.competition_id].count += 1;
-      logTotalsByComp[log.competition_id].total += toScoreNumber(log.value);
+      logsByComp[log.competition_id].push(log);
 
       if (!byComp[log.competition_id]) {
         byComp[log.competition_id] = new Set();
@@ -145,7 +147,7 @@ export default function HomeScreen() {
     compData.forEach((comp: any) => {
       const config = getCompetitionConfig(comp);
       const me = comp.participants?.find((p: any) => p.user_id === user.id);
-      const logInfo = logTotalsByComp[comp.id] ?? { total: 0, count: 0 };
+      const logInfo = aggregateLogScore(config, logsByComp[comp.id] ?? []);
       scoreMap[comp.id] = resolveCompetitionScore(
         config,
         me?.score,

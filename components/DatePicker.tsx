@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
+import { toLocalDateString } from '@/constants/competition';
 import { useTheme } from '@/hooks/useTheme';
 
 interface DatePickerProps {
@@ -113,7 +114,7 @@ export default function DatePicker({ value, onChange, minDate, maxDate, label }:
               const isDisabled =
                 (minDate ? iso < minDate : false) ||
                 (maxDate ? iso > maxDate : false);
-              const isToday = iso === new Date().toISOString().split('T')[0];
+              const isToday = iso === toLocalDateString();
 
               return (
                 <TouchableOpacity

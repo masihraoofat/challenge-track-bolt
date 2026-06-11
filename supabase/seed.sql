@@ -250,7 +250,8 @@ INSERT INTO competitions (
   description,
   join_code,
   icon,
-  color
+  color,
+  score_limit
 )
 VALUES
   (
@@ -264,7 +265,8 @@ VALUES
     'Daily yes/no check-in — most days logged wins.',
     'MED001',
     'moon',
-    'purple'
+    'purple',
+    NULL
   ),
   (
     '22222222-2222-4222-8222-222222222202',
@@ -277,7 +279,8 @@ VALUES
     'Log your daily distance — highest total wins.',
     'RUN001',
     'activity',
-    'teal'
+    'teal',
+    NULL
   ),
   (
     '22222222-2222-4222-8222-222222222203',
@@ -287,10 +290,11 @@ VALUES
     '11111111-1111-4111-8111-111111111101',
     'cumulative_low',
     'hr',
-    'Track daily screen time — lowest total wins.',
+    'Track daily screen time — stay under 2 hr for points.',
     'SCR001',
     'smartphone',
-    'blue'
+    'blue',
+    2
   );
 
 INSERT INTO participants (competition_id, user_id, score)
@@ -408,8 +412,10 @@ FROM (
   SELECT
     dl.competition_id,
     dl.user_id,
-    CASE c.scoring_mode
-      WHEN 'daily' THEN COUNT(*)::numeric
+    CASE
+      WHEN c.scoring_mode = 'daily' THEN COUNT(*)::numeric
+      WHEN c.scoring_mode = 'cumulative_low' AND c.score_limit IS NOT NULL THEN
+        COALESCE(SUM(GREATEST(0, c.score_limit - dl.value)), 0)
       ELSE COALESCE(SUM(dl.value), 0)
     END AS total
   FROM daily_logs dl
@@ -420,7 +426,7 @@ FROM (
       '22222222-2222-4222-8222-222222222202',
       '22222222-2222-4222-8222-222222222203'
     )
-  GROUP BY dl.competition_id, dl.user_id, c.scoring_mode
+  GROUP BY dl.competition_id, dl.user_id, c.scoring_mode, c.score_limit
 ) AS stats
 WHERE p.competition_id = stats.competition_id
   AND p.user_id = stats.user_id;

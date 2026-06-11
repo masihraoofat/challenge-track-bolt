@@ -1,8 +1,10 @@
 import { Colors } from '@/constants/theme';
 import {
   type CompetitionConfig,
+  computeLimitDayPoints,
   toLocalDateString,
   toScoreNumber,
+  usesLimitScoring,
 } from '@/constants/competition';
 
 export interface ChartLog {
@@ -101,6 +103,7 @@ function chartEndDate(endDate: string): string {
 
 export function getChartSubtitle(config: CompetitionConfig): string {
   if (config.scoringMode === 'daily') return 'Days logged per participant';
+  if (usesLimitScoring(config)) return 'Points earned — higher wins';
   if (config.scoringMode === 'cumulative_low') return 'Running total — lower wins';
   return 'Total over time';
 }
@@ -166,7 +169,15 @@ function buildCumulativeLineChartData(
     if (!valuesByUserDate[log.user_id]) {
       valuesByUserDate[log.user_id] = {};
     }
-    valuesByUserDate[log.user_id][log.date_logged] = toScoreNumber(log.value);
+    const raw = toScoreNumber(log.value);
+    if (usesLimitScoring(config) && config.scoreLimit != null) {
+      valuesByUserDate[log.user_id][log.date_logged] = computeLimitDayPoints(
+        config.scoreLimit,
+        raw,
+      );
+    } else {
+      valuesByUserDate[log.user_id][log.date_logged] = raw;
+    }
   });
 
   const participantFinals = participants.map((participant) => {

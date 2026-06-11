@@ -105,6 +105,7 @@ export const COMPETITION_ICON_ORDER: CompetitionIcon[] = [
 export interface CompetitionRow {
   scoring_mode?: string | null;
   unit_label?: string | null;
+  score_limit?: unknown;
   description?: string | null;
   title?: string;
   icon?: string | null;
@@ -114,6 +115,7 @@ export interface CompetitionRow {
 export interface CompetitionConfig {
   scoringMode: ScoringMode;
   unitLabel: string | null;
+  scoreLimit: number | null;
   description: string | null;
   sortOrder: 'desc' | 'asc';
   logInputType: LogInputType;
@@ -121,6 +123,10 @@ export interface CompetitionConfig {
   icon: CompetitionIcon;
   color: string;
   colorSet: CompetitionColorSet;
+}
+
+export function usesLimitScoring(config: CompetitionConfig): boolean {
+  return config.scoringMode === 'cumulative_low' && config.scoreLimit != null;
 }
 
 export const SCORING_MODES: Record<ScoringMode, {
@@ -143,7 +149,7 @@ export const SCORING_MODES: Record<ScoringMode, {
   },
   cumulative_low: {
     label: 'Lowest Total',
-    subtitle: 'Add a number each day — lowest total wins',
+    subtitle: 'Lowest total wins — or set a daily limit to score points',
     sortOrder: 'asc',
     requiresUnit: true,
   },
@@ -203,25 +209,55 @@ function resolveLogInputType(scoringMode: ScoringMode, unitLabel: string | null)
   return 'number';
 }
 
+function normalizeScoreLimit(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = toScoreNumber(value);
+  return n > 0 ? n : null;
+}
+
 export function getCompetitionConfig(competition: CompetitionRow | null | undefined): CompetitionConfig {
   const scoringMode = normalizeScoringMode(competition?.scoring_mode);
   const scoringConfig = SCORING_MODES[scoringMode];
   const unitLabel = competition?.unit_label?.trim() || null;
+  const scoreLimit = normalizeScoreLimit(competition?.score_limit);
   const logInputType = resolveLogInputType(scoringMode, unitLabel);
   const storedColor = competition?.color?.trim() || 'primary';
   const icon = normalizeIcon(competition?.icon);
+  const sortOrder =
+    scoringMode === 'cumulative_low' && scoreLimit != null ? 'desc' : scoringConfig.sortOrder;
 
   return {
     scoringMode,
     unitLabel,
+    scoreLimit,
     description: competition?.description?.trim() || null,
-    sortOrder: scoringConfig.sortOrder,
+    sortOrder,
     logInputType,
     label: scoringConfig.label,
     icon,
     color: storedColor,
     colorSet: resolveCompetitionColorSet(storedColor),
   };
+}
+
+export function computeLimitDayPoints(limit: number, loggedValue: number): number {
+  return Math.max(0, limit - loggedValue);
+}
+
+export function aggregateLogScore(
+  config: CompetitionConfig,
+  logs: { value: unknown }[],
+): { total: number; count: number } {
+  let total = 0;
+  for (const log of logs) {
+    const val = toScoreNumber(log.value);
+    if (usesLimitScoring(config) && config.scoreLimit != null) {
+      total += computeLimitDayPoints(config.scoreLimit, val);
+    } else if (config.scoringMode !== 'daily') {
+      total += val;
+    }
+  }
+  return { total, count: logs.length };
 }
 
 /** Supabase returns PostgreSQL numeric columns as strings — normalize everywhere. */
@@ -323,6 +359,11 @@ export function formatLeaderboardScore(
     return 'No logs yet';
   }
 
+  if (usesLimitScoring(config)) {
+    const formatted = trimZeros(safe, 1);
+    return `${formatted} pt${safe === 1 ? '' : 's'}`;
+  }
+
   return formatUnitScore(safe, config.unitLabel, config.logInputType);
 }
 
@@ -332,6 +373,7 @@ export function formatScore(config: CompetitionConfig, score: unknown): string {
 }
 
 export function getLeaderboardTitle(config: CompetitionConfig): string {
+  if (usesLimitScoring(config)) return 'Points';
   if (config.scoringMode === 'cumulative_low') return 'Lowest Total';
   return 'Leaderboard';
 }
@@ -343,9 +385,14 @@ export function getCheckInLabel(config: CompetitionConfig): string {
 }
 
 export function getLogValueLabel(config: CompetitionConfig): string {
-  if (config.logInputType === 'duration') return 'Time today';
+  const limitSuffix =
+    usesLimitScoring(config) && config.scoreLimit != null
+      ? ` (limit: ${formatUnitScore(config.scoreLimit, config.unitLabel, config.logInputType)})`
+      : '';
+
+  if (config.logInputType === 'duration') return `Time today${limitSuffix}`;
   const unit = config.unitLabel || 'units';
-  return `${unit.charAt(0).toUpperCase() + unit.slice(1)} today`;
+  return `${unit.charAt(0).toUpperCase() + unit.slice(1)} today${limitSuffix}`;
 }
 
 /** YYYY-MM-DD in the user's local timezone. */

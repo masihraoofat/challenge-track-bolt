@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
+  Switch,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -31,6 +32,7 @@ import {
   resolveCompetitionColorSet,
   SCORING_MODES,
   ScoringMode,
+  toLocalDateString,
 } from '@/constants/competition';
 import { isCustomHexColor } from '@/lib/colorUtils';
 
@@ -46,49 +48,50 @@ export default function CreateCompetitionScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const createdCodeRef = useRef<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [scoringMode, setScoringMode] = useState<ScoringMode>('daily');
   const [unitLabel, setUnitLabel] = useState('');
+  const [useDailyLimit, setUseDailyLimit] = useState(false);
+  const [scoreLimit, setScoreLimit] = useState('');
   const [icon, setIcon] = useState<CompetitionIconName>('trophy');
   const [color, setColor] = useState<string>('primary');
   const [colorPickerVisible, setColorPickerVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [createdCode, setCreatedCode] = useState<string | null>(null);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = toLocalDateString();
   const maxEndDate = new Date();
   maxEndDate.setFullYear(maxEndDate.getFullYear() + 1);
-  const maxEndDateStr = maxEndDate.toISOString().split('T')[0];
-
-  useEffect(() => {
-    createdCodeRef.current = createdCode;
-  }, [createdCode]);
+  const maxEndDateStr = toLocalDateString(maxEndDate);
 
   const colorSet = resolveCompetitionColorSet(color);
   const customColorSelected = isCustomHexColor(color);
 
+  const resetForm = useCallback(() => {
+    setTitle('');
+    setDescription('');
+    setStartDate('');
+    setEndDate('');
+    setScoringMode('daily');
+    setUnitLabel('');
+    setUseDailyLimit(false);
+    setScoreLimit('');
+    setIcon('trophy');
+    setColor('primary');
+    setColorPickerVisible(false);
+    setCreatedCode(null);
+    setLoading(false);
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       return () => {
-        if (createdCodeRef.current !== null) {
-          setTitle('');
-          setDescription('');
-          setStartDate('');
-          setEndDate('');
-          setScoringMode('daily');
-          setUnitLabel('');
-          setIcon('trophy');
-          setColor('primary');
-          setColorPickerVisible(false);
-          setCreatedCode(null);
-          setLoading(false);
-        }
+        resetForm();
       };
-    }, [])
+    }, [resetForm])
   );
 
   const handleCreate = async () => {
@@ -108,6 +111,15 @@ export default function CreateCompetitionScreen() {
       showToast('Please enter a unit label for this scoring mode', 'error');
       return;
     }
+    let parsedScoreLimit: number | null = null;
+    if (scoringMode === 'cumulative_low' && useDailyLimit) {
+      const limit = parseFloat(scoreLimit);
+      if (!scoreLimit.trim() || isNaN(limit) || limit <= 0) {
+        showToast('Please enter a valid daily limit greater than 0', 'error');
+        return;
+      }
+      parsedScoreLimit = limit;
+    }
     if (!user) return;
 
     setLoading(true);
@@ -123,6 +135,7 @@ export default function CreateCompetitionScreen() {
         creator_id: user.id,
         scoring_mode: scoringMode,
         unit_label: resolvedUnit,
+        score_limit: parsedScoreLimit,
         description: description.trim() || null,
         icon,
         color,
@@ -344,7 +357,13 @@ export default function CreateCompetitionScreen() {
                       borderColor: colorSet[500],
                     },
                   ]}
-                  onPress={() => setScoringMode(mode)}
+                  onPress={() => {
+                    setScoringMode(mode);
+                    if (mode !== 'cumulative_low') {
+                      setUseDailyLimit(false);
+                      setScoreLimit('');
+                    }
+                  }}
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.modeLabel, selected && { color: colorSet[700] }]}>
@@ -379,6 +398,48 @@ export default function CreateCompetitionScreen() {
                   : 'Shown when logging and on the leaderboard. Use hr or min for time-based logging.'}
               </Text>
             </View>
+          )}
+
+          {scoringMode === 'cumulative_low' && (
+            <>
+              <View style={styles.limitRow}>
+                <View style={styles.limitRowText}>
+                  <Text style={styles.label}>Daily limit</Text>
+                  <Text style={styles.hint}>
+                    Score points for staying under a daily cap — highest total wins
+                  </Text>
+                </View>
+                <Switch
+                  value={useDailyLimit}
+                  onValueChange={(enabled) => {
+                    setUseDailyLimit(enabled);
+                    if (!enabled) setScoreLimit('');
+                  }}
+                  trackColor={{ false: Colors.neutral[300], true: colorSet[400] }}
+                  thumbColor={useDailyLimit ? colorSet[600] : Colors.surface}
+                />
+              </View>
+              {useDailyLimit && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Limit</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={scoreLimit}
+                    onChangeText={setScoreLimit}
+                    placeholder={
+                      unitLabel.trim()
+                        ? `e.g. 2 ${unitLabel.trim()}`
+                        : 'e.g. 2'
+                    }
+                    placeholderTextColor={Colors.neutral[400]}
+                    keyboardType="decimal-pad"
+                  />
+                  <Text style={styles.hint}>
+                    Each day earns max(0, limit − logged amount) points. Over the limit or no log = 0.
+                  </Text>
+                </View>
+              )}
+            </>
           )}
 
           <View style={styles.inputGroup}>
@@ -599,6 +660,17 @@ function createStyles(colors: ThemeColors) {
     fontSize: FontSizes.xs,
     color: Colors.neutral[500],
     lineHeight: 16,
+  },
+  limitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  limitRowText: {
+    flex: 1,
+    gap: 2,
   },
   dateRow: {
     flexDirection: 'row',

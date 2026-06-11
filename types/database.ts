@@ -40,6 +40,7 @@ export interface Database {
           icon: string;
           color: string;
           join_code: string;
+          score_limit: number | null;
         };
         Insert: {
           id?: string;
@@ -54,6 +55,7 @@ export interface Database {
           icon?: string;
           color?: string;
           join_code?: string;
+          score_limit?: number | null;
         };
         Update: {
           id?: string;
@@ -68,6 +70,7 @@ export interface Database {
           icon?: string;
           color?: string;
           join_code?: string;
+          score_limit?: number | null;
         };
       };
       participants: {

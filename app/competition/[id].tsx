@@ -37,6 +37,8 @@ import {
 import {
   type CompetitionConfig,
   type CompetitionRow,
+  aggregateLogScore,
+  computeLimitDayPoints,
   computeStreakFromDates,
   formatDuration,
   formatLeaderboardScore,
@@ -47,6 +49,7 @@ import {
   getLogValueLabel,
   parseDurationLog,
   resolveCompetitionScore,
+  toLocalDateString,
   toScoreNumber,
 } from '@/constants/competition';
 
@@ -144,7 +147,7 @@ export default function CompetitionDetailScreen() {
       showToast('Failed to load leaderboard', 'error');
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateString();
     const { data: todayLog } = await supabase
       .from('daily_logs')
       .select('id, value')
@@ -161,6 +164,7 @@ export default function CompetitionDetailScreen() {
       const todayValues: Record<string, number | null> = {};
       const logTotals: Record<string, number> = {};
       const logCounts: Record<string, number> = {};
+      const logsByUser: Record<string, { value: unknown }[]> = {};
 
       const { data: allLogs, error: logsError } = await supabase
         .from('daily_logs')
@@ -177,11 +181,12 @@ export default function CompetitionDetailScreen() {
       if (allLogs) {
         setChartLogs(allLogs);
         allLogs.forEach((log: any) => {
-          logCounts[log.user_id] = (logCounts[log.user_id] || 0) + 1;
-          const val = toScoreNumber(log.value);
-          if (config.scoringMode !== 'daily') {
-            logTotals[log.user_id] = (logTotals[log.user_id] || 0) + val;
+          if (!logsByUser[log.user_id]) {
+            logsByUser[log.user_id] = [];
           }
+          logsByUser[log.user_id].push(log);
+
+          const val = toScoreNumber(log.value);
           if (log.date_logged === today) {
             todayValues[log.user_id] = val;
           }
@@ -190,6 +195,12 @@ export default function CompetitionDetailScreen() {
           }
           datesByUser[log.user_id].add(log.date_logged);
         });
+
+        for (const [userId, userLogs] of Object.entries(logsByUser)) {
+          const aggregated = aggregateLogScore(config, userLogs);
+          logTotals[userId] = aggregated.total;
+          logCounts[userId] = aggregated.count;
+        }
       }
 
       const entries: LeaderboardEntry[] = participants.map((p: any) => {
@@ -265,7 +276,7 @@ export default function CompetitionDetailScreen() {
     setCheckingIn(true);
 
     const config = getCompetitionConfig(competition);
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateString();
 
     let valueToLog: number | null = null;
     let scoreAmount: number = 1;
@@ -278,8 +289,13 @@ export default function CompetitionDetailScreen() {
         return;
       }
       valueToLog = amount;
-      // Daily-streak mode counts days logged, not the numeric value entered.
-      scoreAmount = config.scoringMode === 'daily' ? 1 : amount;
+      if (config.scoringMode === 'daily') {
+        scoreAmount = 1;
+      } else if (config.scoringMode === 'cumulative_low' && config.scoreLimit != null) {
+        scoreAmount = computeLimitDayPoints(config.scoreLimit, amount);
+      } else {
+        scoreAmount = amount;
+      }
     } else if (config.logInputType === 'duration') {
       const parsed = parseDurationLog(logHours, logMinutes);
       if ('error' in parsed) {
@@ -288,7 +304,11 @@ export default function CompetitionDetailScreen() {
         return;
       }
       valueToLog = parsed.decimalHours;
-      scoreAmount = parsed.decimalHours;
+      if (config.scoringMode === 'cumulative_low' && config.scoreLimit != null) {
+        scoreAmount = computeLimitDayPoints(config.scoreLimit, parsed.decimalHours);
+      } else {
+        scoreAmount = parsed.decimalHours;
+      }
     }
 
     const { data: existingLog } = await supabase
@@ -491,6 +511,7 @@ export default function CompetitionDetailScreen() {
   const colorSet = config.colorSet;
   const daysLeft = getDaysRemaining();
   const active = isCompetitionActive();
+  const checkInLabel = getCheckInLabel(config);
   const maxScore = Math.max(
     ...leaderboard.filter((e) => e.hasLogged).map((e) => e.score),
     1
@@ -555,47 +576,124 @@ export default function CompetitionDetailScreen() {
     );
   };
 
-  const checkInLabel = getCheckInLabel(config);
+  const renderCheckInSection = () => {
+    if (!isActiveParticipant) return null;
+
+    if (!active) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const start = new Date(competition.start_date + 'T00:00:00');
+      const notStarted = today < start;
+
+      return (
+        <View style={styles.checkInSection}>
+          <View style={[styles.inactiveLogNotice, { backgroundColor: colorSet[50] }]}>
+            <Text style={styles.inactiveLogTitle}>
+              {notStarted ? 'Not started yet' : 'Competition ended'}
+            </Text>
+            <Text style={styles.inactiveLogMessage}>
+              {notStarted
+                ? `Logging opens on ${formatDate(competition.start_date)}.`
+                : 'This challenge is no longer accepting daily logs.'}
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.checkInSection}>
+        {config.logInputType === 'number' && !checkedInToday && (
+          <View style={styles.valueInputGroup}>
+            <Text style={styles.valueLabel}>{getLogValueLabel(config)}</Text>
+            <TextInput
+              style={styles.valueInput}
+              value={logValue}
+              onChangeText={setLogValue}
+              placeholder="e.g. 5"
+              placeholderTextColor={Colors.neutral[400]}
+              keyboardType={config.unitLabel === 'pages' ? 'number-pad' : 'decimal-pad'}
+              maxLength={8}
+            />
+            {config.unitLabel ? (
+              <Text style={styles.valueUnit}>{config.unitLabel}</Text>
+            ) : null}
+          </View>
+        )}
+        {config.logInputType === 'duration' && !checkedInToday && (
+          <View style={styles.valueInputGroup}>
+            <Text style={styles.valueLabel}>{getLogValueLabel(config)}</Text>
+            <View style={styles.durationInputRow}>
+              <View style={styles.durationField}>
+                <TextInput
+                  style={styles.durationInput}
+                  value={logHours}
+                  onChangeText={setLogHours}
+                  placeholder="0"
+                  placeholderTextColor={Colors.neutral[400]}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                />
+                <Text style={styles.durationUnit}>hr</Text>
+              </View>
+              <View style={styles.durationField}>
+                <TextInput
+                  style={styles.durationInput}
+                  value={logMinutes}
+                  onChangeText={setLogMinutes}
+                  placeholder="0"
+                  placeholderTextColor={Colors.neutral[400]}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                />
+                <Text style={styles.durationUnit}>min</Text>
+              </View>
+            </View>
+          </View>
+        )}
+        {checkedInToday && config.logInputType !== 'checkin' && todayLoggedValue !== null && (
+          <View style={[styles.loggedTodayCard, { backgroundColor: colorSet[50] }]}>
+            <Text style={styles.loggedTodayLabel}>Logged today</Text>
+            <Text style={[styles.loggedTodayValue, { color: colorSet[700] }]}>
+              {formatTodayValue(config, todayLoggedValue)}
+            </Text>
+          </View>
+        )}
+        <TouchableOpacity
+          style={[
+            styles.checkInButton,
+            { backgroundColor: colorSet[500] },
+            checkedInToday && { backgroundColor: Colors.success[500] },
+          ]}
+          onPress={handleCheckIn}
+          disabled={checkedInToday || checkingIn}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={checkedInToday ? 'Logged today' : checkInLabel}
+        >
+          {checkingIn ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : checkedInToday ? (
+            <>
+              <CheckCircle2 size={22} color="#FFFFFF" />
+              <Text style={styles.checkedInText}>Logged today!</Text>
+            </>
+          ) : (
+            <>
+              <CheckCircle2 size={22} color="#FFFFFF" />
+              <Text style={styles.checkInText}>{checkInLabel}</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
-        <TouchableOpacity
-          onPress={handleBack}
-          style={styles.backButton}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={styles.headerTitleRow}>
-          <CompetitionIcon icon={config.icon} size={18} colorSet={colorSet} />
-          <Text style={styles.headerTitle} numberOfLines={1}>{competition?.title}</Text>
-        </View>
-        {isCreator ? (
-          <TouchableOpacity
-            onPress={handleDeletePress}
-            style={styles.headerActionButton}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            disabled={deleting}
-            accessibilityRole="button"
-            accessibilityLabel="Delete challenge"
-          >
-            {deleting ? (
-              <ActivityIndicator size="small" color={Colors.error[500]} />
-            ) : (
-              <Trash2 size={22} color={Colors.error[500]} />
-            )}
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.headerSpacer} />
-        )}
-      </View>
-
       <FlatList
         style={styles.list}
         data={leaderboard}
@@ -603,7 +701,44 @@ export default function CompetitionDetailScreen() {
         keyExtractor={(item) => item.user_id}
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
-          <View style={styles.infoSection}>
+          <View>
+            <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
+              <TouchableOpacity
+                onPress={handleBack}
+                style={styles.backButton}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Go back"
+              >
+                <ArrowLeft size={24} color={colors.text} />
+              </TouchableOpacity>
+              <View style={styles.headerTitleRow}>
+                <CompetitionIcon icon={config.icon} size={18} colorSet={colorSet} />
+                <Text style={styles.headerTitle} numberOfLines={1}>{competition?.title}</Text>
+              </View>
+              {isCreator ? (
+                <TouchableOpacity
+                  onPress={handleDeletePress}
+                  style={styles.headerActionButton}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  disabled={deleting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete challenge"
+                >
+                  {deleting ? (
+                    <ActivityIndicator size="small" color={Colors.error[500]} />
+                  ) : (
+                    <Trash2 size={22} color={Colors.error[500]} />
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.headerSpacer} />
+              )}
+            </View>
+
+            {renderCheckInSection()}
+
+            <View style={styles.infoSection}>
             <View style={styles.competitionInfo}>
               <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
                 <CompetitionIcon icon={config.icon} size={14} colorSet={colorSet} />
@@ -677,93 +812,6 @@ export default function CompetitionDetailScreen() {
               </View>
             )}
 
-            {active && isActiveParticipant && (
-              <View style={styles.checkInSection}>
-                {config.logInputType === 'number' && !checkedInToday && (
-                  <View style={styles.valueInputGroup}>
-                    <Text style={styles.valueLabel}>{getLogValueLabel(config)}</Text>
-                    <TextInput
-                      style={styles.valueInput}
-                      value={logValue}
-                      onChangeText={setLogValue}
-                      placeholder="e.g. 5"
-                      placeholderTextColor={Colors.neutral[400]}
-                      keyboardType={config.unitLabel === 'pages' ? 'number-pad' : 'decimal-pad'}
-                      maxLength={8}
-                    />
-                    {config.unitLabel ? (
-                      <Text style={styles.valueUnit}>{config.unitLabel}</Text>
-                    ) : null}
-                  </View>
-                )}
-                {config.logInputType === 'duration' && !checkedInToday && (
-                  <View style={styles.valueInputGroup}>
-                    <Text style={styles.valueLabel}>{getLogValueLabel(config)}</Text>
-                    <View style={styles.durationInputRow}>
-                      <View style={styles.durationField}>
-                        <TextInput
-                          style={styles.durationInput}
-                          value={logHours}
-                          onChangeText={setLogHours}
-                          placeholder="0"
-                          placeholderTextColor={Colors.neutral[400]}
-                          keyboardType="number-pad"
-                          maxLength={3}
-                        />
-                        <Text style={styles.durationUnit}>hr</Text>
-                      </View>
-                      <View style={styles.durationField}>
-                        <TextInput
-                          style={styles.durationInput}
-                          value={logMinutes}
-                          onChangeText={setLogMinutes}
-                          placeholder="0"
-                          placeholderTextColor={Colors.neutral[400]}
-                          keyboardType="number-pad"
-                          maxLength={2}
-                        />
-                        <Text style={styles.durationUnit}>min</Text>
-                      </View>
-                    </View>
-                  </View>
-                )}
-                {checkedInToday && config.logInputType !== 'checkin' && todayLoggedValue !== null && (
-                  <View style={[styles.loggedTodayCard, { backgroundColor: colorSet[50] }]}>
-                    <Text style={styles.loggedTodayLabel}>Logged today</Text>
-                    <Text style={[styles.loggedTodayValue, { color: colorSet[700] }]}>
-                      {formatTodayValue(config, todayLoggedValue)}
-                    </Text>
-                  </View>
-                )}
-                <TouchableOpacity
-                  style={[
-                    styles.checkInButton,
-                    { backgroundColor: colorSet[500] },
-                    checkedInToday && { backgroundColor: Colors.success[500] },
-                  ]}
-                  onPress={handleCheckIn}
-                  disabled={checkedInToday || checkingIn}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel={checkedInToday ? 'Logged today' : checkInLabel}
-                >
-                  {checkingIn ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : checkedInToday ? (
-                    <>
-                      <CheckCircle2 size={22} color="#FFFFFF" />
-                      <Text style={styles.checkedInText}>Logged today!</Text>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={22} color="#FFFFFF" />
-                      <Text style={styles.checkInText}>{checkInLabel}</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
-
             <CompetitionChart
               config={config}
               logs={chartLogs}
@@ -779,6 +827,7 @@ export default function CompetitionDetailScreen() {
             <View style={styles.leaderboardHeader}>
               <Trophy size={20} color={Colors.warm[500]} />
               <Text style={styles.leaderboardTitle}>{getLeaderboardTitle(config)}</Text>
+            </View>
             </View>
           </View>
         }
@@ -918,8 +967,6 @@ function createStyles(colors: ThemeColors) {
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.xl,
     paddingBottom: Spacing.md,
-    backgroundColor: colors.background,
-    zIndex: 1,
   },
   backButton: {
     width: 40,
@@ -1028,6 +1075,24 @@ function createStyles(colors: ThemeColors) {
   checkInSection: {
     gap: Spacing.md,
     marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
+  },
+  inactiveLogNotice: {
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.md,
+    gap: Spacing.xs,
+  },
+  inactiveLogTitle: {
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  inactiveLogMessage: {
+    fontSize: FontSizes.sm,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
   valueInputGroup: {
     gap: Spacing.xs,
@@ -1047,6 +1112,8 @@ function createStyles(colors: ThemeColors) {
     fontSize: FontSizes.lg,
     color: colors.text,
     fontWeight: '600',
+    minHeight: 48,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' as const } : {}),
   },
   valueUnit: {
     fontSize: FontSizes.xs,
@@ -1073,7 +1140,10 @@ function createStyles(colors: ThemeColors) {
     fontSize: FontSizes.lg,
     color: colors.text,
     fontWeight: '600',
-    padding: 0,
+    paddingVertical: Spacing.xs,
+    minHeight: 28,
+    minWidth: 32,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' as const } : {}),
   },
   durationUnit: {
     fontSize: FontSizes.sm,
