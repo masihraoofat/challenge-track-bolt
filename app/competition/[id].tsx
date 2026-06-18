@@ -22,6 +22,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { showToast } from '@/components/Toast';
 import { CompetitionIcon } from '@/components/CompetitionIcon';
 import { CompetitionChart } from '@/components/CompetitionChart';
+import { UserAvatar } from '@/components/UserAvatar';
 import { type ChartLog } from '@/lib/chartData';
 import {
   ArrowLeft,
@@ -66,6 +67,7 @@ interface LeaderboardEntry {
   user_id: string;
   score: number;
   username: string;
+  avatar_url: string | null;
   isCurrentUser: boolean;
   streak: number;
   todayValue: number | null;
@@ -134,7 +136,7 @@ export default function CompetitionDetailScreen() {
         .maybeSingle(),
       supabase
         .from('participants')
-        .select('user_id, score, users!inner(username)')
+        .select('user_id, score, users!inner(username, avatar_url)')
         .eq('competition_id', id)
         .is('left_at', null),
     ]);
@@ -218,6 +220,7 @@ export default function CompetitionDetailScreen() {
           user_id: p.user_id,
           score: participantScore,
           username: p.users?.username || 'Unknown',
+          avatar_url: p.users?.avatar_url ?? null,
           isCurrentUser: p.user_id === user.id,
           streak,
           todayValue: todayValues[p.user_id] ?? null,
@@ -545,6 +548,7 @@ export default function CompetitionDetailScreen() {
             <Text style={styles.rankText}>{rank}</Text>
           )}
         </View>
+        <UserAvatar avatarUrl={item.avatar_url} size={36} />
         <View style={styles.userInfo}>
           <View style={styles.nameRow}>
             <Text style={[styles.username, item.isCurrentUser && styles.currentUsername]}>

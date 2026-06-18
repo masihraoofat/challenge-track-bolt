@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { showToast } from '@/components/Toast';
-import { ArrowLeft, LogOut, Moon } from 'lucide-react-native';
+import { ArrowLeft, LogOut, Moon, User } from 'lucide-react-native';
 
 export default function SettingsScreen() {
   const { signOut } = useAuth();
@@ -115,6 +115,16 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.section}>
+        <TouchableOpacity style={styles.row} onPress={() => router.push('/edit-profile')}>
+          <View style={styles.rowLeft}>
+            <User size={20} color={Colors.primary[500]} />
+            <View>
+              <Text style={styles.rowLabel}>Edit Profile</Text>
+              <Text style={styles.rowSubtext}>Photo and bio</Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+        <View style={styles.divider} />
         <View style={styles.row}>
           <View style={styles.rowLeft}>
             <Moon size={20} color={Colors.primary[500]} />

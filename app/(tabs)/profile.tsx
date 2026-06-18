@@ -5,10 +5,17 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
-import { User, BookOpen, Trophy, Flame, Settings } from 'lucide-react-native';
+import { BookOpen, Trophy, Flame, Settings, Pencil } from 'lucide-react-native';
 import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { computeStreakFromDates } from '@/constants/competition';
+import { UserAvatar } from '@/components/UserAvatar';
+
+interface UserProfile {
+  username: string;
+  bio: string | null;
+  avatar_url: string | null;
+}
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -16,6 +23,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [stats, setStats] = useState({ competitions: 0, daysLogged: 0, currentStreak: 0 });
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
   const styles = useMemo(
@@ -48,6 +56,7 @@ export default function ProfileScreen() {
         profileCard: {
           alignItems: 'center',
           paddingVertical: Spacing.xl,
+          paddingHorizontal: Spacing.lg,
           marginHorizontal: Spacing.lg,
           backgroundColor: colors.surface,
           borderRadius: BorderRadius.xl,
@@ -55,24 +64,45 @@ export default function ProfileScreen() {
           borderColor: colors.mutedBorder,
           marginBottom: Spacing.lg,
         },
-        avatar: {
-          width: 80,
-          height: 80,
-          borderRadius: BorderRadius.full,
-          backgroundColor: Colors.primary[100],
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginBottom: Spacing.md,
-        },
         username: {
           fontSize: FontSizes.xl,
           fontWeight: '700',
           color: colors.text,
+          marginTop: Spacing.md,
         },
         email: {
           fontSize: FontSizes.sm,
           color: colors.textSecondary,
           marginTop: Spacing.xs,
+        },
+        bio: {
+          fontSize: FontSizes.sm,
+          color: colors.textSecondary,
+          textAlign: 'center',
+          marginTop: Spacing.md,
+          lineHeight: 20,
+        },
+        bioPlaceholder: {
+          fontSize: FontSizes.sm,
+          color: Colors.neutral[400],
+          textAlign: 'center',
+          marginTop: Spacing.md,
+          fontStyle: 'italic',
+        },
+        editButton: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: Spacing.xs,
+          marginTop: Spacing.lg,
+          paddingHorizontal: Spacing.md,
+          paddingVertical: Spacing.sm,
+          borderRadius: BorderRadius.full,
+          backgroundColor: colors.muted,
+        },
+        editButtonText: {
+          fontSize: FontSizes.sm,
+          fontWeight: '600',
+          color: colors.text,
         },
         loader: {
           marginTop: Spacing.xl,
@@ -107,14 +137,19 @@ export default function ProfileScreen() {
     [colors],
   );
 
-  const fetchStats = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     if (!user) return;
 
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const dateStr = sevenDaysAgo.toISOString().split('T')[0];
 
-    const [compResult, daysResult, logsResult] = await Promise.all([
+    const [profileResult, compResult, daysResult, logsResult] = await Promise.all([
+      supabase
+        .from('users')
+        .select('username, bio, avatar_url')
+        .eq('id', user.id)
+        .single(),
       supabase
         .from('participants')
         .select('competition_id', { count: 'exact', head: true })
@@ -133,6 +168,10 @@ export default function ProfileScreen() {
         .order('date_logged', { ascending: false }),
     ]);
 
+    if (profileResult.data) {
+      setProfile(profileResult.data);
+    }
+
     const loggedDates = new Set((logsResult.data || []).map((l) => l.date_logged));
     const streak = computeStreakFromDates(loggedDates, 7);
 
@@ -146,11 +185,12 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      fetchStats();
-    }, [fetchStats]),
+      fetchData();
+    }, [fetchData]),
   );
 
-  const username = user?.user_metadata?.username || user?.email?.split('@')[0] || 'Reader';
+  const username =
+    profile?.username || user?.user_metadata?.username || user?.email?.split('@')[0] || 'Reader';
 
   return (
     <View style={styles.container}>
@@ -165,11 +205,21 @@ export default function ProfileScreen() {
       </View>
 
       <View style={styles.profileCard}>
-        <View style={styles.avatar}>
-          <User size={40} color={Colors.primary[600]} />
-        </View>
+        <UserAvatar avatarUrl={profile?.avatar_url} size={80} />
         <Text style={styles.username}>{username}</Text>
         <Text style={styles.email}>{user?.email}</Text>
+        {profile?.bio ? (
+          <Text style={styles.bio}>{profile.bio}</Text>
+        ) : (
+          <Text style={styles.bioPlaceholder}>Add a bio to tell others about yourself</Text>
+        )}
+        <TouchableOpacity
+          style={styles.editButton}
+          onPress={() => router.push('/edit-profile')}
+        >
+          <Pencil size={14} color={colors.text} />
+          <Text style={styles.editButtonText}>Edit Profile</Text>
+        </TouchableOpacity>
       </View>
 
       {loading ? (

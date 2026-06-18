@@ -20,7 +20,13 @@
       "expo-router",
       "expo-font",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Habitrak to access your photos for your profile picture."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
