@@ -8,7 +8,6 @@ import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { BookOpen, Trophy, Flame, Settings, Pencil } from 'lucide-react-native';
 import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { computeStreakFromDates } from '@/constants/competition';
 import { UserAvatar } from '@/components/UserAvatar';
 
 interface UserProfile {
@@ -22,7 +21,7 @@ export default function ProfileScreen() {
   const { colors } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [stats, setStats] = useState({ competitions: 0, daysLogged: 0, currentStreak: 0 });
+  const [stats, setStats] = useState({ competitions: 0, daysLogged: 0, challengesWon: 0 });
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -140,14 +139,10 @@ export default function ProfileScreen() {
   const fetchData = useCallback(async () => {
     if (!user) return;
 
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const dateStr = sevenDaysAgo.toISOString().split('T')[0];
-
-    const [profileResult, compResult, daysResult, logsResult] = await Promise.all([
+    const [profileResult, compResult, daysResult] = await Promise.all([
       supabase
         .from('users')
-        .select('username, bio, avatar_url')
+        .select('username, bio, avatar_url, challenges_won')
         .eq('id', user.id)
         .single(),
       supabase
@@ -159,26 +154,16 @@ export default function ProfileScreen() {
         .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id)
         .eq('completed', true),
-      supabase
-        .from('daily_logs')
-        .select('date_logged')
-        .eq('user_id', user.id)
-        .eq('completed', true)
-        .gte('date_logged', dateStr)
-        .order('date_logged', { ascending: false }),
     ]);
 
     if (profileResult.data) {
       setProfile(profileResult.data);
     }
 
-    const loggedDates = new Set((logsResult.data || []).map((l) => l.date_logged));
-    const streak = computeStreakFromDates(loggedDates, 7);
-
     setStats({
       competitions: compResult.count ?? 0,
       daysLogged: daysResult.count ?? 0,
-      currentStreak: streak,
+      challengesWon: profileResult.data?.challenges_won ?? 0,
     });
     setLoading(false);
   }, [user]);
@@ -238,8 +223,8 @@ export default function ProfileScreen() {
           </View>
           <View style={styles.statCard}>
             <Trophy size={24} color={Colors.success[500]} />
-            <Text style={styles.statValue}>{stats.currentStreak}</Text>
-            <Text style={styles.statLabel}>Day Streak</Text>
+            <Text style={styles.statValue}>{stats.challengesWon}</Text>
+            <Text style={styles.statLabel}>Challenges Won</Text>
           </View>
         </View>
       )}

@@ -34,6 +34,7 @@ import {
   Copy,
   Trash2,
   LogOut,
+  UserPlus,
 } from 'lucide-react-native';
 import {
   type CompetitionConfig,
@@ -53,6 +54,11 @@ import {
   toLocalDateString,
   toScoreNumber,
 } from '@/constants/competition';
+import {
+  type FriendUser,
+  fetchFriends,
+  inviteFriendToCompetition,
+} from '@/lib/friends';
 
 interface CompetitionDetail extends CompetitionRow {
   id: string;
@@ -61,6 +67,13 @@ interface CompetitionDetail extends CompetitionRow {
   end_date: string;
   join_code: string;
   creator_id: string;
+  winner_id?: string | null;
+}
+
+interface WinnerInfo {
+  user_id: string;
+  username: string;
+  avatar_url: string | null;
 }
 
 interface LeaderboardEntry {
@@ -106,6 +119,12 @@ export default function CompetitionDetailScreen() {
   const [leaving, setLeaving] = useState(false);
   const [rejoining, setRejoining] = useState(false);
   const [chartLogs, setChartLogs] = useState<ChartLog[]>([]);
+  const [winner, setWinner] = useState<WinnerInfo | null>(null);
+  const [inviteModalVisible, setInviteModalVisible] = useState(false);
+  const [inviteFriends, setInviteFriends] = useState<FriendUser[]>([]);
+  const [loadingInviteFriends, setLoadingInviteFriends] = useState(false);
+  const [invitingFriendId, setInvitingFriendId] = useState<string | null>(null);
+  const [invitedFriendIds, setInvitedFriendIds] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     if (!id || !user) return;
@@ -122,10 +141,44 @@ export default function CompetitionDetailScreen() {
       setRefreshing(false);
       return;
     }
-    setCompetition(comp);
+
+    const today = toLocalDateString();
+    let resolvedComp = comp;
+
+    if (comp.end_date < today) {
+      await supabase.rpc('finalize_competition', { comp_id: id });
+      const { data: refreshedComp } = await supabase
+        .from('competitions')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (refreshedComp) resolvedComp = refreshedComp;
+    }
+
+    setCompetition(resolvedComp);
+
+    if (resolvedComp.winner_id) {
+      const { data: winnerUser } = await supabase
+        .from('users')
+        .select('username, avatar_url')
+        .eq('id', resolvedComp.winner_id)
+        .single();
+      setWinner(
+        winnerUser
+          ? {
+              user_id: resolvedComp.winner_id,
+              username: winnerUser.username,
+              avatar_url: winnerUser.avatar_url,
+            }
+          : null,
+      );
+    } else {
+      setWinner(null);
+    }
+
     setChartLogs([]);
 
-    const config = getCompetitionConfig(comp);
+    const config = getCompetitionConfig(resolvedComp);
 
     const [{ data: myMembership }, { data: participants, error: partError }] = await Promise.all([
       supabase
@@ -149,7 +202,6 @@ export default function CompetitionDetailScreen() {
       showToast('Failed to load leaderboard', 'error');
     }
 
-    const today = toLocalDateString();
     const { data: todayLog } = await supabase
       .from('daily_logs')
       .select('id, value')
@@ -416,6 +468,53 @@ export default function CompetitionDetailScreen() {
     }
   };
 
+  const openInviteModal = async () => {
+    if (!user || !id) return;
+
+    setInviteModalVisible(true);
+    setLoadingInviteFriends(true);
+
+    const [friends, invitesResult] = await Promise.all([
+      fetchFriends(user.id),
+      supabase
+        .from('competition_invitations')
+        .select('invitee_id')
+        .eq('competition_id', id)
+        .eq('status', 'pending'),
+    ]);
+
+    const participantIds = new Set(leaderboard.map((e) => e.user_id));
+    const pendingIds = new Set((invitesResult.data ?? []).map((row) => row.invitee_id));
+
+    setInviteFriends(friends.filter((f) => !participantIds.has(f.id)));
+    setInvitedFriendIds(pendingIds);
+    setLoadingInviteFriends(false);
+  };
+
+  const handleInviteFriend = async (friendId: string) => {
+    if (!id) return;
+
+    setInvitingFriendId(friendId);
+    const { error } = await inviteFriendToCompetition(id, friendId);
+    setInvitingFriendId(null);
+
+    if (error) {
+      showToast(error, 'error');
+      return;
+    }
+
+    setInvitedFriendIds((prev) => new Set(prev).add(friendId));
+    showToast('Invitation sent!', 'success');
+  };
+
+  const handleUserPress = (userId: string) => {
+    if (userId === user?.id) {
+      router.push('/profile');
+      return;
+    }
+    router.push({ pathname: '/user/[id]', params: { id: userId } });
+  };
+
   const handleBack = () => {
     if (router.canGoBack()) {
       router.back();
@@ -540,7 +639,11 @@ export default function CompetitionDetailScreen() {
     }
 
     return (
-      <View style={[styles.leaderboardRow, item.isCurrentUser && styles.currentUserRow]}>
+      <TouchableOpacity
+        style={[styles.leaderboardRow, item.isCurrentUser && styles.currentUserRow]}
+        onPress={() => handleUserPress(item.user_id)}
+        activeOpacity={0.7}
+      >
         <View style={styles.rankContainer}>
           {medalColor ? (
             <Trophy size={20} color={medalColor} fill={medalColor} />
@@ -576,7 +679,7 @@ export default function CompetitionDetailScreen() {
             )}
           </View>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -742,6 +845,20 @@ export default function CompetitionDetailScreen() {
 
             {renderCheckInSection()}
 
+            {!active && winner && (
+              <View style={[styles.winnerBanner, { backgroundColor: colorSet[50], borderColor: colorSet[200] }]}>
+                <Trophy size={22} color="#FFD700" fill="#FFD700" />
+                <UserAvatar avatarUrl={winner.avatar_url} size={40} />
+                <View style={styles.winnerTextGroup}>
+                  <Text style={styles.winnerLabel}>Winner</Text>
+                  <Text style={styles.winnerName}>
+                    {winner.username}
+                    {winner.user_id === user?.id ? ' (You)' : ''}
+                  </Text>
+                </View>
+              </View>
+            )}
+
             <View style={styles.infoSection}>
             <View style={styles.competitionInfo}>
               <View style={[styles.infoChip, { backgroundColor: colorSet[50] }]}>
@@ -790,6 +907,16 @@ export default function CompetitionDetailScreen() {
                   <Text style={[styles.copyCodeText, { color: colorSet[600] }]}>Copy</Text>
                 </TouchableOpacity>
               </View>
+            )}
+
+            {isCreator && active && (
+              <TouchableOpacity
+                style={[styles.inviteFriendsButton, { backgroundColor: colorSet[500] }]}
+                onPress={openInviteModal}
+              >
+                <UserPlus size={18} color="#FFFFFF" />
+                <Text style={styles.inviteFriendsButtonText}>Invite Friends</Text>
+              </TouchableOpacity>
             )}
 
             {hasLeft && (
@@ -941,6 +1068,69 @@ export default function CompetitionDetailScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={inviteModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setInviteModalVisible(false)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <View style={[styles.deleteModalContent, styles.inviteModalContent]}>
+            <Text style={styles.deleteModalTitle}>Invite Friends</Text>
+            <Text style={styles.deleteModalMessage}>
+              Send an invite to friends who haven&apos;t joined yet.
+            </Text>
+            {loadingInviteFriends ? (
+              <ActivityIndicator size="large" color={Colors.primary[500]} style={styles.inviteLoader} />
+            ) : inviteFriends.length === 0 ? (
+              <Text style={styles.inviteEmptyText}>
+                No friends available to invite. Add friends from the Friends tab.
+              </Text>
+            ) : (
+              <FlatList
+                data={inviteFriends}
+                keyExtractor={(item) => item.id}
+                style={styles.inviteList}
+                renderItem={({ item }) => {
+                  const invited = invitedFriendIds.has(item.id);
+                  const busy = invitingFriendId === item.id;
+
+                  return (
+                    <View style={styles.inviteFriendRow}>
+                      <UserAvatar avatarUrl={item.avatar_url} size={40} />
+                      <Text style={styles.inviteFriendName}>{item.username}</Text>
+                      <TouchableOpacity
+                        style={[
+                          styles.inviteSendButton,
+                          invited && styles.inviteSentButton,
+                          busy && styles.deleteModalConfirmDisabled,
+                        ]}
+                        onPress={() => !invited && handleInviteFriend(item.id)}
+                        disabled={invited || busy}
+                      >
+                        {busy ? (
+                          <ActivityIndicator color="#FFFFFF" size="small" />
+                        ) : (
+                          <Text style={styles.inviteSendButtonText}>
+                            {invited ? 'Sent' : 'Invite'}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                }}
+              />
+            )}
+            <TouchableOpacity
+              style={styles.inviteCloseButton}
+              onPress={() => setInviteModalVisible(false)}
+            >
+              <Text style={styles.deleteModalCancelText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1076,6 +1266,73 @@ function createStyles(colors: ThemeColors) {
     fontSize: FontSizes.sm,
     fontWeight: '600',
   },
+  inviteFriendsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.lg,
+  },
+  inviteFriendsButtonText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  inviteModalContent: {
+    maxHeight: '70%',
+  },
+  inviteLoader: {
+    marginVertical: Spacing.lg,
+  },
+  inviteEmptyText: {
+    fontSize: FontSizes.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginVertical: Spacing.lg,
+    lineHeight: 20,
+  },
+  inviteList: {
+    maxHeight: 280,
+    marginBottom: Spacing.md,
+  },
+  inviteFriendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.mutedBorder,
+  },
+  inviteFriendName: {
+    flex: 1,
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  inviteSendButton: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.primary[500],
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  inviteSentButton: {
+    backgroundColor: colors.muted,
+  },
+  inviteSendButtonText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  inviteCloseButton: {
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: colors.muted,
+    alignItems: 'center',
+  },
   checkInSection: {
     gap: Spacing.md,
     marginBottom: Spacing.sm,
@@ -1097,6 +1354,32 @@ function createStyles(colors: ThemeColors) {
     fontSize: FontSizes.sm,
     color: colors.textSecondary,
     lineHeight: 20,
+  },
+  winnerBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.lg,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+  },
+  winnerTextGroup: {
+    flex: 1,
+    gap: 2,
+  },
+  winnerLabel: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  winnerName: {
+    fontSize: FontSizes.lg,
+    fontWeight: '700',
+    color: colors.text,
   },
   valueInputGroup: {
     gap: Spacing.xs,

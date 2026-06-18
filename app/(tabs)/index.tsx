@@ -51,6 +51,8 @@ interface CompetitionWithParticipation {
   unit_label?: string | null;
   score_limit?: number | null;
   description?: string | null;
+  winner_id?: string | null;
+  winner?: { username: string } | null;
   participants: ParticipantInfo[];
 }
 
@@ -100,11 +102,12 @@ export default function HomeScreen() {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoStr = toLocalDateString(thirtyDaysAgo);
+    const todayStr = toLocalDateString();
 
     const [compResult, logsResult] = await Promise.all([
       supabase
         .from('competitions')
-        .select('*, participants(user_id, score, left_at)')
+        .select('*, participants(user_id, score, left_at), winner:users!winner_id(username)')
         .in('id', compIds)
         .order('created_at', { ascending: false }),
       supabase
@@ -123,7 +126,25 @@ export default function HomeScreen() {
       return;
     }
 
-    const compData = compResult.data || [];
+    let compData = compResult.data || [];
+
+    const needsFinalize = compData.filter(
+      (c) => c.end_date < todayStr && !c.winner_id,
+    );
+    if (needsFinalize.length > 0) {
+      await Promise.all(
+        needsFinalize.map((c) =>
+          supabase.rpc('finalize_competition', { comp_id: c.id }),
+        ),
+      );
+      const { data: refreshed } = await supabase
+        .from('competitions')
+        .select('*, participants(user_id, score, left_at), winner:users!winner_id(username)')
+        .in('id', compIds)
+        .order('created_at', { ascending: false });
+      if (refreshed) compData = refreshed;
+    }
+
     setCompetitions(compData);
 
     const logsByComp: Record<string, { value: unknown }[]> = {};
@@ -375,6 +396,17 @@ export default function HomeScreen() {
               {daysLeft > 0 ? `${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining` : 'Final day!'}
             </Text>
             <Trophy size={16} color={Colors.warm[500]} />
+          </View>
+        )}
+
+        {!active && item.winner?.username && (
+          <View style={styles.cardFooter}>
+            <View style={styles.winnerRow}>
+              <Trophy size={16} color={Colors.warm[500]} />
+              <Text style={styles.winnerText}>
+                Winner: {item.winner.username}
+              </Text>
+            </View>
           </View>
         )}
       </TouchableOpacity>
@@ -703,6 +735,16 @@ function createStyles(colors: ThemeColors) {
   daysText: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
+  },
+  winnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  winnerText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: colors.textSecondary,
   },
   emptyState: {
     flex: 1,

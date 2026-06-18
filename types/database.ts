@@ -15,6 +15,7 @@ export interface Database {
           username: string;
           bio: string | null;
           avatar_url: string | null;
+          challenges_won: number;
           created_at: string;
         };
         Insert: {
@@ -22,6 +23,7 @@ export interface Database {
           username: string;
           bio?: string | null;
           avatar_url?: string | null;
+          challenges_won?: number;
           created_at?: string;
         };
         Update: {
@@ -29,6 +31,7 @@ export interface Database {
           username?: string;
           bio?: string | null;
           avatar_url?: string | null;
+          challenges_won?: number;
           created_at?: string;
         };
       };
@@ -47,6 +50,7 @@ export interface Database {
           color: string;
           join_code: string;
           score_limit: number | null;
+          winner_id: string | null;
         };
         Insert: {
           id?: string;
@@ -62,6 +66,7 @@ export interface Database {
           color?: string;
           join_code?: string;
           score_limit?: number | null;
+          winner_id?: string | null;
         };
         Update: {
           id?: string;
@@ -77,6 +82,7 @@ export interface Database {
           color?: string;
           join_code?: string;
           score_limit?: number | null;
+          winner_id?: string | null;
         };
       };
       participants: {
@@ -212,6 +218,55 @@ export interface Database {
           created_at?: string;
         };
       };
+      friendships: {
+        Row: {
+          requester_id: string;
+          addressee_id: string;
+          status: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          requester_id: string;
+          addressee_id: string;
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          requester_id?: string;
+          addressee_id?: string;
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      competition_invitations: {
+        Row: {
+          id: string;
+          competition_id: string;
+          inviter_id: string;
+          invitee_id: string;
+          status: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          competition_id: string;
+          inviter_id: string;
+          invitee_id: string;
+          status?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          competition_id?: string;
+          inviter_id?: string;
+          invitee_id?: string;
+          status?: string;
+          created_at?: string;
+        };
+      };
     };
     Functions: {
       increment_score: {
@@ -237,6 +292,56 @@ export interface Database {
       leave_competition: {
         Args: {
           comp_id: string;
+        };
+        Returns: undefined;
+      };
+      finalize_competition: {
+        Args: {
+          comp_id: string;
+        };
+        Returns: string | null;
+      };
+      send_friend_request: {
+        Args: {
+          target_id: string;
+        };
+        Returns: undefined;
+      };
+      accept_friend_request: {
+        Args: {
+          requester_id: string;
+        };
+        Returns: undefined;
+      };
+      decline_friend_request: {
+        Args: {
+          requester_id: string;
+        };
+        Returns: undefined;
+      };
+      cancel_friend_request: {
+        Args: {
+          addressee_id: string;
+        };
+        Returns: undefined;
+      };
+      remove_friend: {
+        Args: {
+          friend_id: string;
+        };
+        Returns: undefined;
+      };
+      invite_friend_to_competition: {
+        Args: {
+          comp_id: string;
+          friend_id: string;
+        };
+        Returns: undefined;
+      };
+      respond_competition_invitation: {
+        Args: {
+          invitation_id: string;
+          accept: boolean;
         };
         Returns: undefined;
       };
