@@ -22,6 +22,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn } from 'lucide-react-native';
 import { showToast } from '@/components/Toast';
 import { CompetitionIcon } from '@/components/CompetitionIcon';
+import { CompetitionResultsModal } from '@/components/CompetitionResultsModal';
 import {
   aggregateLogScore,
   computeStreakFromDates,
@@ -36,6 +37,7 @@ interface ParticipantInfo {
   user_id: string;
   score: number;
   left_at?: string | null;
+  results_viewed_at?: string | null;
 }
 
 interface CompetitionWithParticipation {
@@ -72,6 +74,10 @@ export default function HomeScreen() {
   const [myScores, setMyScores] = useState<
     Record<string, { score: number; hasLogged: boolean }>
   >({});
+  const [listSection, setListSection] = useState<'active' | 'completed'>('active');
+  const [resultsModalCompetition, setResultsModalCompetition] =
+    useState<CompetitionWithParticipation | null>(null);
+  const [resultsModalVisible, setResultsModalVisible] = useState(false);
 
   const fetchCompetitions = useCallback(async () => {
     if (!user) return;
@@ -107,7 +113,7 @@ export default function HomeScreen() {
     const [compResult, logsResult] = await Promise.all([
       supabase
         .from('competitions')
-        .select('*, participants(user_id, score, left_at), winner:users!winner_id(username)')
+        .select('*, participants(user_id, score, left_at, results_viewed_at), winner:users!winner_id(username)')
         .in('id', compIds)
         .order('created_at', { ascending: false }),
       supabase
@@ -139,7 +145,7 @@ export default function HomeScreen() {
       );
       const { data: refreshed } = await supabase
         .from('competitions')
-        .select('*, participants(user_id, score, left_at), winner:users!winner_id(username)')
+        .select('*, participants(user_id, score, left_at, results_viewed_at), winner:users!winner_id(username)')
         .in('id', compIds)
         .order('created_at', { ascending: false });
       if (refreshed) compData = refreshed;
@@ -286,6 +292,89 @@ export default function HomeScreen() {
     return formatLeaderboardScore(config, toScoreNumber(me?.score), false);
   };
 
+  const getMyParticipant = (comp: CompetitionWithParticipation) =>
+    comp.participants?.find((p) => p.user_id === user?.id);
+
+  const hasViewedResults = (comp: CompetitionWithParticipation) =>
+    !!getMyParticipant(comp)?.results_viewed_at;
+
+  const isUnviewedEnded = (comp: CompetitionWithParticipation) => {
+    const todayStr = toLocalDateString();
+    return comp.end_date < todayStr && !hasViewedResults(comp);
+  };
+
+  const { activeCompetitions, completedCompetitions } = useMemo(() => {
+    const todayStr = toLocalDateString();
+    const active: CompetitionWithParticipation[] = [];
+    const completed: CompetitionWithParticipation[] = [];
+
+    competitions.forEach((comp) => {
+      const ended = comp.end_date < todayStr;
+      const viewed = hasViewedResults(comp);
+      if (ended && viewed) {
+        completed.push(comp);
+      } else {
+        active.push(comp);
+      }
+    });
+
+    active.sort((a, b) => {
+      const aUnviewed = isUnviewedEnded(a);
+      const bUnviewed = isUnviewedEnded(b);
+      if (aUnviewed && !bUnviewed) return -1;
+      if (!aUnviewed && bUnviewed) return 1;
+      if (aUnviewed && bUnviewed) {
+        return b.end_date.localeCompare(a.end_date);
+      }
+      return a.end_date.localeCompare(b.end_date);
+    });
+
+    completed.sort((a, b) => b.end_date.localeCompare(a.end_date));
+
+    return { activeCompetitions: active, completedCompetitions: completed };
+  }, [competitions, user?.id]);
+
+  const displayedCompetitions =
+    listSection === 'completed' ? completedCompetitions : activeCompetitions;
+
+  const handleCompetitionPress = (item: CompetitionWithParticipation) => {
+    if (listSection === 'completed') {
+      router.push(`/competition/${item.id}?readonly=1`);
+      return;
+    }
+    if (isUnviewedEnded(item)) {
+      setResultsModalCompetition(item);
+      setResultsModalVisible(true);
+      return;
+    }
+    router.push(`/competition/${item.id}`);
+  };
+
+  const handleResultsViewed = (compId: string) => {
+    setCompetitions((prev) =>
+      prev.map((comp) => {
+        if (comp.id !== compId) return comp;
+        return {
+          ...comp,
+          participants: comp.participants.map((p) =>
+            p.user_id === user?.id
+              ? { ...p, results_viewed_at: new Date().toISOString() }
+              : p,
+          ),
+        };
+      }),
+    );
+  };
+
+  const closeResultsModal = () => {
+    setResultsModalVisible(false);
+    setTimeout(() => setResultsModalCompetition(null), 280);
+  };
+
+  const scheduleResultsViewed = (compId: string) => {
+    setTimeout(() => handleResultsViewed(compId), 280);
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -298,6 +387,7 @@ export default function HomeScreen() {
     const config = getCompetitionConfig(item);
     const colorSet = config.colorSet;
     const active = isCompetitionActive(item);
+    const unviewedEnded = listSection === 'active' && isUnviewedEnded(item);
     const daysLeft = getDaysRemaining(item);
     const participantCount = item.participants?.filter((p) => !p.left_at).length || 0;
     const resolvedScore = myScores[item.id];
@@ -332,8 +422,12 @@ export default function HomeScreen() {
 
     return (
       <TouchableOpacity
-        style={[styles.card, { borderLeftWidth: 4, borderLeftColor: colorSet[500] }]}
-        onPress={() => router.push(`/competition/${item.id}`)}
+        style={[
+          styles.card,
+          { borderLeftWidth: 4, borderLeftColor: colorSet[500] },
+          unviewedEnded && styles.cardGoldTrim,
+        ]}
+        onPress={() => handleCompetitionPress(item)}
         activeOpacity={0.7}
       >
         <View style={styles.cardHeader}>
@@ -344,7 +438,7 @@ export default function HomeScreen() {
             </View>
             <View style={[styles.statusBadge, active ? styles.statusActive : styles.statusEnded]}>
               <Text style={[styles.statusText, active ? styles.statusTextActive : styles.statusTextEnded]}>
-                {active ? 'Active' : 'Ended'}
+                {unviewedEnded ? 'Results ready' : active ? 'Active' : 'Ended'}
               </Text>
             </View>
           </View>
@@ -416,25 +510,61 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
-        <View>
+        <TouchableOpacity
+          onPress={() => setListSection('active')}
+          activeOpacity={listSection === 'active' ? 1 : 0.7}
+        >
           <Text style={styles.greeting}>Your Competitions</Text>
-          <Text style={styles.subGreeting}>Keep the streak going</Text>
-        </View>
-        <TouchableOpacity style={styles.joinButton} onPress={() => setJoinModalVisible(true)}>
-          <LogIn size={18} color={Colors.primary[600]} />
-          <Text style={styles.joinButtonText}>Join</Text>
+          <Text style={styles.subGreeting}>
+            {listSection === 'completed' ? 'Past challenges' : 'Keep the streak going'}
+          </Text>
         </TouchableOpacity>
+        <View style={styles.headerPills}>
+          {completedCompetitions.length > 0 && (
+            <TouchableOpacity
+              style={[
+                styles.headerPill,
+                listSection === 'completed' && styles.headerPillActive,
+              ]}
+              onPress={() =>
+                setListSection((prev) => (prev === 'completed' ? 'active' : 'completed'))
+              }
+            >
+              <Trophy
+                size={16}
+                color={listSection === 'completed' ? '#FFFFFF' : Colors.warm[500]}
+              />
+              <Text
+                style={[
+                  styles.headerPillText,
+                  listSection === 'completed' && styles.headerPillTextActive,
+                ]}
+              >
+                Completed
+              </Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={styles.joinButton} onPress={() => setJoinModalVisible(true)}>
+            <LogIn size={18} color={Colors.primary[600]} />
+            <Text style={styles.joinButtonText}>Join</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {competitions.length === 0 ? (
+      {displayedCompetitions.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyIconContainer}>
             <Trophy size={48} color={Colors.neutral[300]} />
           </View>
-          <Text style={styles.emptyTitle}>No competitions yet</Text>
-          <Text style={styles.emptySubtitle}>
-            Create your first competition or join one with a code!
+          <Text style={styles.emptyTitle}>
+            {listSection === 'completed' ? 'No completed challenges yet' : 'No competitions yet'}
           </Text>
+          <Text style={styles.emptySubtitle}>
+            {listSection === 'completed'
+              ? 'Finished challenges will appear here after you view their results.'
+              : 'Create your first competition or join one with a code!'}
+          </Text>
+          {listSection === 'active' && (
           <View style={styles.emptyActions}>
             <TouchableOpacity
               style={styles.emptyCreateButton}
@@ -451,10 +581,11 @@ export default function HomeScreen() {
               <Text style={styles.emptyJoinText}>Join</Text>
             </TouchableOpacity>
           </View>
+          )}
         </View>
       ) : (
         <FlatList
-          data={competitions}
+          data={displayedCompetitions}
           renderItem={renderCompetition}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
@@ -530,6 +661,15 @@ export default function HomeScreen() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
+
+      {resultsModalCompetition && (
+        <CompetitionResultsModal
+          visible={resultsModalVisible}
+          competition={resultsModalCompetition}
+          onClose={closeResultsModal}
+          onViewed={() => scheduleResultsViewed(resultsModalCompetition.id)}
+        />
+      )}
     </View>
   );
 }
@@ -564,6 +704,31 @@ function createStyles(colors: ThemeColors) {
     color: colors.textSecondary,
     marginTop: Spacing.xs,
   },
+  headerPills: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  headerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.warm[100],
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+  },
+  headerPillActive: {
+    backgroundColor: Colors.warm[500],
+  },
+  headerPillText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: Colors.warm[500],
+  },
+  headerPillTextActive: {
+    color: '#FFFFFF',
+  },
   joinButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -594,6 +759,14 @@ function createStyles(colors: ThemeColors) {
     elevation: 2,
     borderWidth: 1,
     borderColor: colors.mutedBorder,
+  },
+  cardGoldTrim: {
+    borderColor: '#FFD700',
+    borderWidth: 2,
+    shadowColor: '#FFD700',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
   },
   cardHeader: {
     flexDirection: 'row',

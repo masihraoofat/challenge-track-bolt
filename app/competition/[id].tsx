@@ -39,9 +39,7 @@ import {
 import {
   type CompetitionConfig,
   type CompetitionRow,
-  aggregateLogScore,
   computeLimitDayPoints,
-  computeStreakFromDates,
   formatDuration,
   formatLeaderboardScore,
   formatUnitScore,
@@ -50,7 +48,6 @@ import {
   getLeaderboardTitle,
   getLogValueLabel,
   parseDurationLog,
-  resolveCompetitionScore,
   toLocalDateString,
   toScoreNumber,
 } from '@/constants/competition';
@@ -59,6 +56,7 @@ import {
   fetchFriends,
   inviteFriendToCompetition,
 } from '@/lib/friends';
+import { buildLeaderboardEntries, type LeaderboardEntry } from '@/lib/leaderboard';
 
 interface CompetitionDetail extends CompetitionRow {
   id: string;
@@ -76,25 +74,18 @@ interface WinnerInfo {
   avatar_url: string | null;
 }
 
-interface LeaderboardEntry {
-  user_id: string;
-  score: number;
-  username: string;
-  avatar_url: string | null;
-  isCurrentUser: boolean;
-  streak: number;
-  todayValue: number | null;
-  hasLogged: boolean;
-}
-
 function formatTodayValue(config: CompetitionConfig, value: number): string {
   if (config.logInputType === 'duration') return formatDuration(value);
   return formatUnitScore(value, config.unitLabel, config.logInputType);
 }
 
 export default function CompetitionDetailScreen() {
-  const { id: rawId } = useLocalSearchParams<{ id: string | string[] }>();
+  const { id: rawId, readonly: rawReadonly } = useLocalSearchParams<{
+    id: string | string[];
+    readonly?: string | string[];
+  }>();
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
+  const readonlyParam = Array.isArray(rawReadonly) ? rawReadonly[0] : rawReadonly;
   const router = useRouter();
   const { user } = useAuth();
   const { colors } = useTheme();
@@ -125,6 +116,7 @@ export default function CompetitionDetailScreen() {
   const [loadingInviteFriends, setLoadingInviteFriends] = useState(false);
   const [invitingFriendId, setInvitingFriendId] = useState<string | null>(null);
   const [invitedFriendIds, setInvitedFriendIds] = useState<Set<string>>(new Set());
+  const [resultsViewedAt, setResultsViewedAt] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!id || !user) return;
@@ -183,7 +175,7 @@ export default function CompetitionDetailScreen() {
     const [{ data: myMembership }, { data: participants, error: partError }] = await Promise.all([
       supabase
         .from('participants')
-        .select('left_at')
+        .select('left_at, results_viewed_at')
         .eq('competition_id', id)
         .eq('user_id', user.id)
         .maybeSingle(),
@@ -197,6 +189,7 @@ export default function CompetitionDetailScreen() {
     const activeParticipant = !!myMembership && myMembership.left_at === null;
     setIsActiveParticipant(activeParticipant);
     setHasLeft(!!myMembership && myMembership.left_at !== null);
+    setResultsViewedAt(myMembership?.results_viewed_at ?? null);
 
     if (partError) {
       showToast('Failed to load leaderboard', 'error');
@@ -215,11 +208,6 @@ export default function CompetitionDetailScreen() {
     setCheckedInToday(checkedIn);
 
     if (participants) {
-      const todayValues: Record<string, number | null> = {};
-      const logTotals: Record<string, number> = {};
-      const logCounts: Record<string, number> = {};
-      const logsByUser: Record<string, { value: unknown }[]> = {};
-
       const { data: allLogs, error: logsError } = await supabase
         .from('daily_logs')
         .select('user_id, value, date_logged')
@@ -230,74 +218,26 @@ export default function CompetitionDetailScreen() {
         showToast('Failed to load daily logs', 'error');
       }
 
-      const datesByUser: Record<string, Set<string>> = {};
-
       if (allLogs) {
         setChartLogs(allLogs);
-        allLogs.forEach((log: any) => {
-          if (!logsByUser[log.user_id]) {
-            logsByUser[log.user_id] = [];
-          }
-          logsByUser[log.user_id].push(log);
-
-          const val = toScoreNumber(log.value);
-          if (log.date_logged === today) {
-            todayValues[log.user_id] = val;
-          }
-          if (!datesByUser[log.user_id]) {
-            datesByUser[log.user_id] = new Set();
-          }
-          datesByUser[log.user_id].add(log.date_logged);
-        });
-
-        for (const [userId, userLogs] of Object.entries(logsByUser)) {
-          const aggregated = aggregateLogScore(config, userLogs);
-          logTotals[userId] = aggregated.total;
-          logCounts[userId] = aggregated.count;
-        }
       }
 
-      const entries: LeaderboardEntry[] = participants.map((p: any) => {
-        const { score: participantScore, hasLogged } = resolveCompetitionScore(
-          config,
-          p.score,
-          logTotals[p.user_id] ?? 0,
-          logCounts[p.user_id] ?? 0,
-        );
-        const streak = hasLogged
-          ? computeStreakFromDates(datesByUser[p.user_id] ?? new Set())
-          : 0;
-
-        return {
-          user_id: p.user_id,
-          score: participantScore,
-          username: p.users?.username || 'Unknown',
-          avatar_url: p.users?.avatar_url ?? null,
-          isCurrentUser: p.user_id === user.id,
-          streak,
-          todayValue: todayValues[p.user_id] ?? null,
-          hasLogged,
-        };
-      });
-
-      // Sort based on competition type. For ascending (lowest wins) competitions
-      // we push participants who haven't logged anything yet to the bottom so a
-      // 0-score doesn't masquerade as the winner.
-      if (config.sortOrder === 'asc') {
-        entries.sort((a, b) => {
-          if (!a.hasLogged && b.hasLogged) return 1;
-          if (a.hasLogged && !b.hasLogged) return -1;
-          return a.score - b.score;
-        });
-      } else {
-        entries.sort((a, b) => {
-          if (!a.hasLogged && b.hasLogged) return 1;
-          if (a.hasLogged && !b.hasLogged) return -1;
-          return b.score - a.score;
-        });
-      }
+      const entries = buildLeaderboardEntries(
+        config,
+        participants,
+        allLogs ?? [],
+        user.id,
+        today,
+      );
 
       setLeaderboard(entries);
+
+      const todayValues: Record<string, number | null> = {};
+      (allLogs ?? []).forEach((log) => {
+        if (log.date_logged === today) {
+          todayValues[log.user_id] = toScoreNumber(log.value);
+        }
+      });
 
       if (config.logInputType !== 'checkin') {
         const todayVal = todayValues[user.id];
@@ -613,6 +553,10 @@ export default function CompetitionDetailScreen() {
   const colorSet = config.colorSet;
   const daysLeft = getDaysRemaining();
   const active = isCompetitionActive();
+  const todayStr = toLocalDateString();
+  const isReadOnly =
+    readonlyParam === '1' ||
+    (!active && competition.end_date < todayStr && !!resultsViewedAt);
   const checkInLabel = getCheckInLabel(config);
   const maxScore = Math.max(
     ...leaderboard.filter((e) => e.hasLogged).map((e) => e.score),
@@ -684,7 +628,7 @@ export default function CompetitionDetailScreen() {
   };
 
   const renderCheckInSection = () => {
-    if (!isActiveParticipant) return null;
+    if (isReadOnly || !isActiveParticipant) return null;
 
     if (!active) {
       const today = new Date();
@@ -823,7 +767,7 @@ export default function CompetitionDetailScreen() {
                 <CompetitionIcon icon={config.icon} size={18} colorSet={colorSet} />
                 <Text style={styles.headerTitle} numberOfLines={1}>{competition?.title}</Text>
               </View>
-              {isCreator ? (
+              {isCreator && !isReadOnly ? (
                 <TouchableOpacity
                   onPress={handleDeletePress}
                   style={styles.headerActionButton}
@@ -891,7 +835,7 @@ export default function CompetitionDetailScreen() {
               <Text style={styles.descriptionText}>{config.description}</Text>
             ) : null}
 
-            {competition?.join_code && (
+            {competition?.join_code && !isReadOnly && (
               <View style={styles.joinCodeSection}>
                 <View style={[styles.joinCodeCard, { borderColor: colorSet[200] }]}>
                   <Text style={styles.joinCodeLabel}>INVITE CODE</Text>
@@ -909,7 +853,7 @@ export default function CompetitionDetailScreen() {
               </View>
             )}
 
-            {isCreator && active && (
+            {isCreator && active && !isReadOnly && (
               <TouchableOpacity
                 style={[styles.inviteFriendsButton, { backgroundColor: colorSet[500] }]}
                 onPress={openInviteModal}
@@ -919,7 +863,7 @@ export default function CompetitionDetailScreen() {
               </TouchableOpacity>
             )}
 
-            {hasLeft && (
+            {hasLeft && !isReadOnly && (
               <View style={[styles.rejoinSection, { backgroundColor: colorSet[50], borderColor: colorSet[200] }]}>
                 <Text style={styles.rejoinTitle}>You left this challenge</Text>
                 <Text style={styles.rejoinMessage}>
@@ -963,7 +907,7 @@ export default function CompetitionDetailScreen() {
           </View>
         }
         ListFooterComponent={
-          isActiveParticipant ? (
+          isActiveParticipant && !isReadOnly ? (
             <View
               style={[
                 styles.leaveFooter,

@@ -92,6 +92,7 @@ export interface Database {
           score: number | string;
           joined_at: string;
           left_at: string | null;
+          results_viewed_at: string | null;
         };
         Insert: {
           competition_id: string;
@@ -99,6 +100,7 @@ export interface Database {
           score?: number | string;
           joined_at?: string;
           left_at?: string | null;
+          results_viewed_at?: string | null;
         };
         Update: {
           competition_id?: string;
@@ -106,6 +108,7 @@ export interface Database {
           score?: number | string;
           joined_at?: string;
           left_at?: string | null;
+          results_viewed_at?: string | null;
         };
       };
       daily_logs: {
@@ -300,6 +303,12 @@ export interface Database {
           comp_id: string;
         };
         Returns: string | null;
+      };
+      mark_competition_results_viewed: {
+        Args: {
+          comp_id: string;
+        };
+        Returns: undefined;
       };
       send_friend_request: {
         Args: {
