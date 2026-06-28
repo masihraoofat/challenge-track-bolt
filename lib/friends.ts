@@ -35,6 +35,23 @@ export interface CompetitionInvite {
   };
 }
 
+export interface CollaborationInvite {
+  id: string;
+  created_at: string;
+  collaboration: {
+    id: string;
+    title: string;
+    icon: string;
+    color: string;
+    join_code: string;
+  };
+  inviter: {
+    id: string;
+    username: string;
+    avatar_url: string | null;
+  };
+}
+
 function parseRpcError(error: { message: string }): string {
   const msg = error.message.toLowerCase();
   if (msg.includes('already friends')) return 'You are already friends';
@@ -44,6 +61,7 @@ function parseRpcError(error: { message: string }): string {
   if (msg.includes('not friends')) return 'You are not friends with this user';
   if (msg.includes('not the creator')) return 'Only the challenge creator can invite';
   if (msg.includes('competition has ended')) return 'This challenge has ended';
+  if (msg.includes('collaboration has ended')) return 'This collaboration has ended';
   if (msg.includes('already joined')) return 'They have already joined this challenge';
   if (msg.includes('request not found')) return 'Request not found';
   if (msg.includes('invitation not found')) return 'Invitation not found';
@@ -177,6 +195,26 @@ export async function fetchCompetitionInvites(userId: string): Promise<Competiti
   return data as unknown as CompetitionInvite[];
 }
 
+export async function fetchCollaborationInvites(userId: string): Promise<CollaborationInvite[]> {
+  const { data } = await supabase
+    .from('collaboration_invitations')
+    .select(
+      `
+      id,
+      created_at,
+      collaboration:collaboration_id(id, title, icon, color, join_code),
+      inviter:inviter_id(id, username, avatar_url)
+    `,
+    )
+    .eq('invitee_id', userId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false });
+
+  if (!data) return [];
+
+  return data as unknown as CollaborationInvite[];
+}
+
 export async function sendFriendRequest(
   targetId: string,
 ): Promise<{ error: string | null }> {
@@ -232,6 +270,30 @@ export async function respondCompetitionInvitation(
   accept: boolean,
 ): Promise<{ error: string | null }> {
   const { error } = await supabase.rpc('respond_competition_invitation', {
+    invitation_id: invitationId,
+    accept,
+  });
+  if (error) return { error: parseRpcError(error) };
+  return { error: null };
+}
+
+export async function inviteFriendToCollaboration(
+  collabId: string,
+  friendId: string,
+): Promise<{ error: string | null }> {
+  const { error } = await supabase.rpc('invite_friend_to_collaboration', {
+    collab_id: collabId,
+    friend_id: friendId,
+  });
+  if (error) return { error: parseRpcError(error) };
+  return { error: null };
+}
+
+export async function respondCollaborationInvitation(
+  invitationId: string,
+  accept: boolean,
+): Promise<{ error: string | null }> {
+  const { error } = await supabase.rpc('respond_collaboration_invitation', {
     invitation_id: invitationId,
     accept,
   });

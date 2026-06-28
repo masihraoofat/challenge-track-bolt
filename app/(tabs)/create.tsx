@@ -12,7 +12,7 @@ import {
   Switch,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { supabase } from '@/lib/supabase';
@@ -20,7 +20,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
 import { useTheme } from '@/hooks/useTheme';
 import { showToast } from '@/components/Toast';
-import { ArrowLeft, Copy, Pipette } from 'lucide-react-native';
+import { ArrowLeft, Copy, Pipette, Trophy, Handshake } from 'lucide-react-native';
 import DatePicker from '@/components/DatePicker';
 import { CompetitionIcon } from '@/components/CompetitionIcon';
 import { ColorPickerModal } from '@/components/ColorPickerModal';
@@ -35,6 +35,14 @@ import {
   toLocalDateString,
 } from '@/constants/competition';
 import { isCustomHexColor } from '@/lib/colorUtils';
+import {
+  type GoalMode,
+  type PeriodType,
+  PERIOD_TYPES,
+  PERIOD_LABELS,
+} from '@/constants/collaboration';
+
+type CreateKind = 'competition' | 'collaboration';
 
 const ICON_GAP = Spacing.sm;
 const ICON_ROWS = [
@@ -44,23 +52,39 @@ const ICON_ROWS = [
 
 export default function CreateCompetitionScreen() {
   const router = useRouter();
+  const { type: typeParam } = useLocalSearchParams<{ type?: string }>();
   const { user } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const initialKind: CreateKind | null =
+    typeParam === 'collaboration' ? 'collaboration' : typeParam === 'competition' ? 'competition' : null;
+  const [createKind, setCreateKind] = useState<CreateKind | null>(initialKind);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [isContinuous, setIsContinuous] = useState(false);
+  const [goalMode, setGoalMode] = useState<GoalMode>('periodic');
+  const [selectedPeriods, setSelectedPeriods] = useState<PeriodType[]>(['weekly']);
+  const [periodTargets, setPeriodTargets] = useState<Record<PeriodType, string>>({
+    weekly: '',
+    monthly: '',
+    yearly: '',
+  });
+  const [overallTarget, setOverallTarget] = useState('');
   const [scoringMode, setScoringMode] = useState<ScoringMode>('daily');
   const [unitLabel, setUnitLabel] = useState('');
   const [useDailyLimit, setUseDailyLimit] = useState(false);
   const [scoreLimit, setScoreLimit] = useState('');
-  const [icon, setIcon] = useState<CompetitionIconName>('trophy');
-  const [color, setColor] = useState<string>('primary');
+  const [icon, setIcon] = useState<CompetitionIconName>(
+    initialKind === 'collaboration' ? 'activity' : 'trophy',
+  );
+  const [color, setColor] = useState<string>(initialKind === 'collaboration' ? 'teal' : 'primary');
   const [colorPickerVisible, setColorPickerVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [createdCode, setCreatedCode] = useState<string | null>(null);
+  const [createdKind, setCreatedKind] = useState<CreateKind>('competition');
 
   const today = toLocalDateString();
   const maxEndDate = new Date();
@@ -71,20 +95,27 @@ export default function CreateCompetitionScreen() {
   const customColorSelected = isCustomHexColor(color);
 
   const resetForm = useCallback(() => {
+    setCreateKind(initialKind);
     setTitle('');
     setDescription('');
     setStartDate('');
     setEndDate('');
+    setIsContinuous(false);
+    setGoalMode('periodic');
+    setSelectedPeriods(['weekly']);
+    setPeriodTargets({ weekly: '', monthly: '', yearly: '' });
+    setOverallTarget('');
     setScoringMode('daily');
     setUnitLabel('');
     setUseDailyLimit(false);
     setScoreLimit('');
-    setIcon('trophy');
-    setColor('primary');
+    setIcon(initialKind === 'collaboration' ? 'activity' : 'trophy');
+    setColor(initialKind === 'collaboration' ? 'teal' : 'primary');
     setColorPickerVisible(false);
     setCreatedCode(null);
+    setCreatedKind('competition');
     setLoading(false);
-  }, []);
+  }, [initialKind]);
 
   useFocusEffect(
     useCallback(() => {
@@ -94,7 +125,129 @@ export default function CreateCompetitionScreen() {
     }, [resetForm])
   );
 
+  const togglePeriod = (period: PeriodType) => {
+    setSelectedPeriods((prev) => {
+      if (prev.includes(period)) {
+        if (prev.length === 1) return prev;
+        return prev.filter((p) => p !== period);
+      }
+      return [...prev, period];
+    });
+  };
+
+  const handleCreateCollaboration = async () => {
+    if (!title.trim()) {
+      showToast('Please enter a collaboration title', 'error');
+      return;
+    }
+    if (!startDate) {
+      showToast('Please set a start date', 'error');
+      return;
+    }
+    if (!isContinuous && !endDate) {
+      showToast('Please set an end date or enable continuous', 'error');
+      return;
+    }
+    if (!isContinuous && endDate && endDate < startDate) {
+      showToast('End date must be after start date', 'error');
+      return;
+    }
+    if (!unitLabel.trim()) {
+      showToast('Please enter a unit label', 'error');
+      return;
+    }
+
+    const effectiveGoalMode: GoalMode = isContinuous ? 'periodic' : goalMode;
+    if (effectiveGoalMode === 'periodic' && selectedPeriods.length === 0) {
+      showToast('Select at least one goal period', 'error');
+      return;
+    }
+
+    if (!user) return;
+    setLoading(true);
+
+    let parsedOverallTarget: number | null = null;
+    if (effectiveGoalMode === 'overall' && overallTarget.trim()) {
+      const val = parseFloat(overallTarget);
+      if (isNaN(val) || val <= 0) {
+        showToast('Enter a valid overall target', 'error');
+        setLoading(false);
+        return;
+      }
+      parsedOverallTarget = val;
+    }
+
+    const { data: collab, error: collabError } = await supabase
+      .from('collaborations')
+      .insert({
+        title: title.trim(),
+        description: description.trim() || null,
+        creator_id: user.id,
+        start_date: startDate,
+        end_date: isContinuous ? null : endDate,
+        unit_label: unitLabel.trim(),
+        icon,
+        color,
+        goal_mode: effectiveGoalMode,
+        overall_target_value: effectiveGoalMode === 'overall' ? parsedOverallTarget : null,
+      })
+      .select()
+      .single();
+
+    if (collabError || !collab) {
+      showToast('Failed to create collaboration', 'error');
+      setLoading(false);
+      return;
+    }
+
+    if (effectiveGoalMode === 'periodic') {
+      const periodRows = selectedPeriods.map((period_type) => {
+        const targetStr = periodTargets[period_type].trim();
+        let target_value: number | null = null;
+        if (targetStr) {
+          const val = parseFloat(targetStr);
+          if (!isNaN(val) && val > 0) target_value = val;
+        }
+        return {
+          collaboration_id: collab.id,
+          period_type,
+          target_value,
+        };
+      });
+
+      const { error: periodError } = await supabase
+        .from('collaboration_goal_periods')
+        .insert(periodRows);
+
+      if (periodError) {
+        showToast('Collaboration created, but goal periods failed', 'error');
+        setLoading(false);
+        return;
+      }
+    }
+
+    const { error: memberError } = await supabase.from('collaboration_members').insert({
+      collaboration_id: collab.id,
+      user_id: user.id,
+    });
+
+    if (memberError) {
+      showToast('Collaboration created, but failed to join', 'error');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(false);
+    setCreatedKind('collaboration');
+    setCreatedCode(collab.join_code);
+    showToast('Collaboration created!', 'success');
+  };
+
   const handleCreate = async () => {
+    if (createKind === 'collaboration') {
+      await handleCreateCollaboration();
+      return;
+    }
     if (!title.trim()) {
       showToast('Please enter a competition title', 'error');
       return;
@@ -172,6 +325,7 @@ export default function CreateCompetitionScreen() {
     });
 
     setLoading(false);
+    setCreatedKind('competition');
     setCreatedCode(competition.join_code);
     showToast('Competition created!', 'success');
   };
@@ -188,17 +342,22 @@ export default function CreateCompetitionScreen() {
 
   const handleDone = () => {
     setCreatedCode(null);
-    router.replace('/(tabs)');
+    router.replace(
+      createdKind === 'collaboration' ? '/(tabs)?section=collaborations' : '/(tabs)',
+    );
   };
 
   if (createdCode) {
+    const isCollab = createdKind === 'collaboration';
     return (
       <View style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={handleDone} style={styles.backButton}>
             <ArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Competition Created!</Text>
+          <Text style={styles.headerTitle}>
+            {isCollab ? 'Collaboration Created!' : 'Competition Created!'}
+          </Text>
           <View style={{ width: 40 }} />
         </View>
 
@@ -208,7 +367,7 @@ export default function CreateCompetitionScreen() {
           </View>
           <Text style={styles.successTitle}>All set!</Text>
           <Text style={styles.successSubtitle}>
-            Share this code with friends so they can join your challenge
+            Share this code with friends so they can join your {isCollab ? 'collaboration' : 'challenge'}
           </Text>
 
           <View style={[styles.codeCard, { borderColor: colorSet[200] }]}>
@@ -232,6 +391,58 @@ export default function CreateCompetitionScreen() {
     );
   }
 
+  if (!createKind) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <ArrowLeft size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Create</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <View style={styles.typePickerContent}>
+          <Text style={styles.sectionTitle}>What would you like to create?</Text>
+          <Text style={styles.sectionSubtitle}>
+            Compete against friends or collaborate on shared goals
+          </Text>
+          <TouchableOpacity
+            style={styles.typeCard}
+            onPress={() => setCreateKind('competition')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.typeIcon, { backgroundColor: Colors.primary[100] }]}>
+              <Trophy size={28} color={Colors.primary[600]} />
+            </View>
+            <Text style={styles.typeCardTitle}>Competition</Text>
+            <Text style={styles.typeCardSubtitle}>
+              Timed challenge with scoring modes and a winner
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.typeCard}
+            onPress={() => {
+              setCreateKind('collaboration');
+              setIcon('activity');
+              setColor('teal');
+            }}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.typeIcon, { backgroundColor: Colors.teal[100] }]}>
+              <Handshake size={28} color={Colors.teal[600]} />
+            </View>
+            <Text style={styles.typeCardTitle}>Collaboration</Text>
+            <Text style={styles.typeCardSubtitle}>
+              Group goals with weekly, monthly, or yearly tracking
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  const isCollabForm = createKind === 'collaboration';
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -242,7 +453,9 @@ export default function CreateCompetitionScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <ArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>New Competition</Text>
+          <Text style={styles.headerTitle}>
+            {isCollabForm ? 'New Collaboration' : 'New Competition'}
+          </Text>
           <View style={{ width: 40 }} />
         </View>
 
@@ -250,9 +463,13 @@ export default function CreateCompetitionScreen() {
           <View style={[styles.iconContainer, { backgroundColor: colorSet[100] }]}>
             <CompetitionIcon icon={icon} size={36} colorSet={colorSet} />
           </View>
-          <Text style={styles.sectionTitle}>Create a Challenge</Text>
+          <Text style={styles.sectionTitle}>
+            {isCollabForm ? 'Create a Collaboration' : 'Create a Challenge'}
+          </Text>
           <Text style={styles.sectionSubtitle}>
-            Pick an icon and color, then choose how scoring works
+            {isCollabForm
+              ? 'Set group goals and track contributions together'
+              : 'Pick an icon and color, then choose how scoring works'}
           </Text>
         </View>
 
@@ -342,6 +559,7 @@ export default function CreateCompetitionScreen() {
             </View>
           </View>
 
+          {!isCollabForm && (
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Scoring Mode</Text>
             {(Object.keys(SCORING_MODES) as ScoringMode[]).map((mode) => {
@@ -374,33 +592,38 @@ export default function CreateCompetitionScreen() {
               );
             })}
           </View>
+          )}
 
-          {(SCORING_MODES[scoringMode].requiresUnit || scoringMode === 'daily') && (
+          {(isCollabForm || SCORING_MODES[scoringMode].requiresUnit || scoringMode === 'daily') && (
             <View style={styles.inputGroup}>
               <Text style={styles.label}>
-                Unit Label{scoringMode === 'daily' ? ' (optional)' : ''}
+                Unit Label{!isCollabForm && scoringMode === 'daily' ? ' (optional)' : ''}
               </Text>
               <TextInput
                 style={styles.input}
                 value={unitLabel}
                 onChangeText={setUnitLabel}
                 placeholder={
-                  scoringMode === 'daily'
-                    ? 'e.g. pages — leave blank for check-in only'
-                    : 'e.g. pages, glasses, km, hr'
+                  isCollabForm
+                    ? 'e.g. km, pages, glasses'
+                    : scoringMode === 'daily'
+                      ? 'e.g. pages — leave blank for check-in only'
+                      : 'e.g. pages, glasses, km, hr'
                 }
                 placeholderTextColor={Colors.neutral[400]}
                 maxLength={20}
               />
+              {!isCollabForm && (
               <Text style={styles.hint}>
                 {scoringMode === 'daily'
                   ? 'Optional — track a daily amount while scoring by streak'
                   : 'Shown when logging and on the leaderboard. Use hr or min for time-based logging.'}
               </Text>
+              )}
             </View>
           )}
 
-          {scoringMode === 'cumulative_low' && (
+          {!isCollabForm && scoringMode === 'cumulative_low' && (
             <>
               <View style={styles.limitRow}>
                 <View style={styles.limitRowText}>
@@ -443,7 +666,9 @@ export default function CreateCompetitionScreen() {
           )}
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Competition Title</Text>
+            <Text style={styles.label}>
+              {isCollabForm ? 'Collaboration Title' : 'Competition Title'}
+            </Text>
             <TextInput
               style={styles.input}
               value={title}
@@ -468,6 +693,114 @@ export default function CreateCompetitionScreen() {
             />
           </View>
 
+          {isCollabForm && (
+            <>
+              <View style={styles.limitRow}>
+                <View style={styles.limitRowText}>
+                  <Text style={styles.label}>Continuous</Text>
+                  <Text style={styles.hint}>No end date — track goals over time</Text>
+                </View>
+                <Switch
+                  value={isContinuous}
+                  onValueChange={(enabled) => {
+                    setIsContinuous(enabled);
+                    if (enabled) {
+                      setEndDate('');
+                      setGoalMode('periodic');
+                    }
+                  }}
+                  trackColor={{ false: Colors.neutral[300], true: colorSet[400] }}
+                  thumbColor={isContinuous ? colorSet[600] : Colors.surface}
+                />
+              </View>
+
+              {!isContinuous && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Goal Type</Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.modeCard,
+                      goalMode === 'overall' && {
+                        backgroundColor: colorSet[50],
+                        borderColor: colorSet[500],
+                      },
+                    ]}
+                    onPress={() => setGoalMode('overall')}
+                  >
+                    <Text style={styles.modeLabel}>Overall goal</Text>
+                    <Text style={styles.modeSubtitle}>One target for the entire date range</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.modeCard,
+                      goalMode === 'periodic' && {
+                        backgroundColor: colorSet[50],
+                        borderColor: colorSet[500],
+                      },
+                    ]}
+                    onPress={() => setGoalMode('periodic')}
+                  >
+                    <Text style={styles.modeLabel}>Periodic goals</Text>
+                    <Text style={styles.modeSubtitle}>Weekly, monthly, and/or yearly targets</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {(isContinuous || goalMode === 'periodic') && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Goal Periods</Text>
+                  {PERIOD_TYPES.map((period) => {
+                    const selected = selectedPeriods.includes(period);
+                    return (
+                      <View key={period}>
+                        <TouchableOpacity
+                          style={[
+                            styles.modeCard,
+                            selected && {
+                              backgroundColor: colorSet[50],
+                              borderColor: colorSet[500],
+                            },
+                          ]}
+                          onPress={() => togglePeriod(period)}
+                        >
+                          <Text style={[styles.modeLabel, selected && { color: colorSet[700] }]}>
+                            {PERIOD_LABELS[period]}
+                          </Text>
+                        </TouchableOpacity>
+                        {selected && (
+                          <TextInput
+                            style={[styles.input, { marginTop: Spacing.xs, marginBottom: Spacing.sm }]}
+                            value={periodTargets[period]}
+                            onChangeText={(text) =>
+                              setPeriodTargets((prev) => ({ ...prev, [period]: text }))
+                            }
+                            placeholder={`Optional target per ${period.replace('ly', '')} (e.g. 500)`}
+                            placeholderTextColor={Colors.neutral[400]}
+                            keyboardType="decimal-pad"
+                          />
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {!isContinuous && goalMode === 'overall' && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Overall Target (optional)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={overallTarget}
+                    onChangeText={setOverallTarget}
+                    placeholder="e.g. 1000"
+                    placeholderTextColor={Colors.neutral[400]}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              )}
+            </>
+          )}
+
           <View style={styles.dateRow}>
             <View style={styles.dateField}>
               <DatePicker
@@ -477,6 +810,7 @@ export default function CreateCompetitionScreen() {
                 minDate={today}
               />
             </View>
+            {!isCollabForm || !isContinuous ? (
             <View style={styles.dateField}>
               <DatePicker
                 label="End Date"
@@ -486,6 +820,7 @@ export default function CreateCompetitionScreen() {
                 maxDate={maxEndDateStr}
               />
             </View>
+            ) : null}
           </View>
 
           <TouchableOpacity
@@ -500,7 +835,9 @@ export default function CreateCompetitionScreen() {
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.buttonText}>Create Competition</Text>
+              <Text style={styles.buttonText}>
+                {isCollabForm ? 'Create Collaboration' : 'Create Competition'}
+              </Text>
             )}
           </TouchableOpacity>
         </View>
@@ -765,6 +1102,37 @@ function createStyles(colors: ThemeColors) {
   doneButtonText: {
     fontSize: FontSizes.md,
     fontWeight: '600',
+  },
+  typePickerContent: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.xl,
+    gap: Spacing.lg,
+  },
+  typeCard: {
+    backgroundColor: colors.surface,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: Spacing.sm,
+  },
+  typeIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: BorderRadius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.xs,
+  },
+  typeCardTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  typeCardSubtitle: {
+    fontSize: FontSizes.sm,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
 });
 }

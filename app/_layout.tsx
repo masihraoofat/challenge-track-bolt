@@ -29,6 +29,7 @@ function RootNavigator() {
       <Stack.Screen name="(tabs)" redirect={!session} />
       <Stack.Screen name="(auth)" redirect={!!session} />
       <Stack.Screen name="competition/[id]" redirect={!session} />
+      <Stack.Screen name="collaboration/[id]" redirect={!session} />
       <Stack.Screen name="user/[id]" redirect={!session} />
       <Stack.Screen name="update-password" />
       <Stack.Screen name="+not-found" />

@@ -270,6 +270,148 @@ export interface Database {
           created_at?: string;
         };
       };
+      collaborations: {
+        Row: {
+          id: string;
+          title: string;
+          description: string | null;
+          creator_id: string;
+          start_date: string;
+          end_date: string | null;
+          unit_label: string | null;
+          icon: string;
+          color: string;
+          join_code: string;
+          goal_mode: string;
+          overall_target_value: number | string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          description?: string | null;
+          creator_id: string;
+          start_date: string;
+          end_date?: string | null;
+          unit_label?: string | null;
+          icon?: string;
+          color?: string;
+          join_code?: string;
+          goal_mode?: string;
+          overall_target_value?: number | string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          title?: string;
+          description?: string | null;
+          creator_id?: string;
+          start_date?: string;
+          end_date?: string | null;
+          unit_label?: string | null;
+          icon?: string;
+          color?: string;
+          join_code?: string;
+          goal_mode?: string;
+          overall_target_value?: number | string | null;
+          created_at?: string;
+        };
+      };
+      collaboration_goal_periods: {
+        Row: {
+          id: string;
+          collaboration_id: string;
+          period_type: string;
+          target_value: number | string | null;
+        };
+        Insert: {
+          id?: string;
+          collaboration_id: string;
+          period_type: string;
+          target_value?: number | string | null;
+        };
+        Update: {
+          id?: string;
+          collaboration_id?: string;
+          period_type?: string;
+          target_value?: number | string | null;
+        };
+      };
+      collaboration_members: {
+        Row: {
+          collaboration_id: string;
+          user_id: string;
+          joined_at: string;
+          left_at: string | null;
+        };
+        Insert: {
+          collaboration_id: string;
+          user_id: string;
+          joined_at?: string;
+          left_at?: string | null;
+        };
+        Update: {
+          collaboration_id?: string;
+          user_id?: string;
+          joined_at?: string;
+          left_at?: string | null;
+        };
+      };
+      collaboration_logs: {
+        Row: {
+          id: string;
+          collaboration_id: string;
+          user_id: string;
+          date_logged: string;
+          completed: boolean;
+          value: number | string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          collaboration_id: string;
+          user_id: string;
+          date_logged: string;
+          completed?: boolean;
+          value?: number | string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          collaboration_id?: string;
+          user_id?: string;
+          date_logged?: string;
+          completed?: boolean;
+          value?: number | string | null;
+          created_at?: string;
+        };
+      };
+      collaboration_invitations: {
+        Row: {
+          id: string;
+          collaboration_id: string;
+          inviter_id: string;
+          invitee_id: string;
+          status: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          collaboration_id: string;
+          inviter_id: string;
+          invitee_id: string;
+          status?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          collaboration_id?: string;
+          inviter_id?: string;
+          invitee_id?: string;
+          status?: string;
+          created_at?: string;
+        };
+      };
     };
     Functions: {
       increment_score: {
@@ -348,6 +490,38 @@ export interface Database {
         Returns: undefined;
       };
       respond_competition_invitation: {
+        Args: {
+          invitation_id: string;
+          accept: boolean;
+        };
+        Returns: undefined;
+      };
+      join_collaboration: {
+        Args: {
+          collab_id: string;
+        };
+        Returns: undefined;
+      };
+      leave_collaboration: {
+        Args: {
+          collab_id: string;
+        };
+        Returns: undefined;
+      };
+      delete_collaboration: {
+        Args: {
+          collab_id: string;
+        };
+        Returns: undefined;
+      };
+      invite_friend_to_collaboration: {
+        Args: {
+          collab_id: string;
+          friend_id: string;
+        };
+        Returns: undefined;
+      };
+      respond_collaboration_invitation: {
         Args: {
           invitation_id: string;
           accept: boolean;

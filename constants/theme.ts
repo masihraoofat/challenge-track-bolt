@@ -103,6 +103,7 @@ export const Colors = {
 export interface ThemeColors {
   background: string;
   surface: string;
+  headerBackground: string;
   text: string;
   textSecondary: string;
   border: string;
@@ -114,6 +115,7 @@ export interface ThemeColors {
 export const lightTheme: ThemeColors = {
   background: Colors.background,
   surface: Colors.surface,
+  headerBackground: Colors.warm[100],
   text: Colors.text,
   textSecondary: Colors.textSecondary,
   border: Colors.border,
@@ -125,6 +127,7 @@ export const lightTheme: ThemeColors = {
 export const darkTheme: ThemeColors = {
   background: Colors.neutral[900],
   surface: Colors.neutral[800],
+  headerBackground: Colors.neutral[800],
   text: Colors.neutral[50],
   textSecondary: Colors.neutral[400],
   border: Colors.neutral[700],

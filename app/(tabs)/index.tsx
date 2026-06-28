@@ -14,12 +14,12 @@ import {
   ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, Spacing, BorderRadius, FontSizes, ThemeColors } from '@/constants/theme';
 import { useTheme } from '@/hooks/useTheme';
-import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn } from 'lucide-react-native';
+import { Trophy, Calendar, Users, Plus, Flame, Zap, LogIn, Handshake } from 'lucide-react-native';
 import { showToast } from '@/components/Toast';
 import { CompetitionIcon } from '@/components/CompetitionIcon';
 import { CompetitionResultsModal } from '@/components/CompetitionResultsModal';
@@ -28,10 +28,37 @@ import {
   computeStreakFromDates,
   formatLeaderboardScore,
   getCompetitionConfig,
+  resolveCompetitionColorSet,
   resolveCompetitionScore,
   toLocalDateString,
   toScoreNumber,
 } from '@/constants/competition';
+import {
+  type CollaborationGoalPeriod,
+  type CollaborationLog,
+  formatCollabUnitScore,
+  getCurrentPeriodBucket,
+  isCollaborationActive,
+  isCollaborationContinuous,
+  sumLogsInBucket,
+} from '@/constants/collaboration';
+
+interface CollaborationWithMembership {
+  id: string;
+  title: string;
+  description?: string | null;
+  start_date: string;
+  end_date?: string | null;
+  creator_id: string;
+  join_code: string;
+  icon?: string | null;
+  color?: string | null;
+  unit_label?: string | null;
+  goal_mode: string;
+  overall_target_value?: number | null;
+  collaboration_members: { user_id: string; left_at?: string | null }[];
+  collaboration_goal_periods: CollaborationGoalPeriod[];
+}
 
 interface ParticipantInfo {
   user_id: string;
@@ -58,8 +85,13 @@ interface CompetitionWithParticipation {
   participants: ParticipantInfo[];
 }
 
+type ActiveFeedItem =
+  | { kind: 'collab'; item: CollaborationWithMembership }
+  | { kind: 'competition'; item: CompetitionWithParticipation };
+
 export default function HomeScreen() {
   const { user } = useAuth();
+  const { section: sectionParam } = useLocalSearchParams<{ section?: string }>();
   const { colors } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -74,7 +106,11 @@ export default function HomeScreen() {
   const [myScores, setMyScores] = useState<
     Record<string, { score: number; hasLogged: boolean }>
   >({});
-  const [listSection, setListSection] = useState<'active' | 'completed'>('active');
+  const [listSection, setListSection] = useState<
+    'active' | 'competitions' | 'collaborations' | 'completed'
+  >('active');
+  const [collaborations, setCollaborations] = useState<CollaborationWithMembership[]>([]);
+  const [collabLogs, setCollabLogs] = useState<Record<string, CollaborationLog[]>>({});
   const [resultsModalCompetition, setResultsModalCompetition] =
     useState<CompetitionWithParticipation | null>(null);
   const [resultsModalVisible, setResultsModalVisible] = useState(false);
@@ -90,8 +126,6 @@ export default function HomeScreen() {
 
     if (memberError) {
       showToast('Failed to load competitions', 'error');
-      setLoading(false);
-      setRefreshing(false);
       return;
     }
 
@@ -100,8 +134,6 @@ export default function HomeScreen() {
       setCompetitions([]);
       setStreaks({});
       setMyScores({});
-      setLoading(false);
-      setRefreshing(false);
       return;
     }
 
@@ -127,8 +159,6 @@ export default function HomeScreen() {
 
     if (compResult.error) {
       showToast('Failed to load competitions', 'error');
-      setLoading(false);
-      setRefreshing(false);
       return;
     }
 
@@ -186,22 +216,87 @@ export default function HomeScreen() {
 
     setMyScores(scoreMap);
     setStreaks(computed);
+  }, [user]);
+
+  const fetchCollaborations = useCallback(async () => {
+    if (!user) return;
+
+    const { data: memberships, error: memberError } = await supabase
+      .from('collaboration_members')
+      .select('collaboration_id')
+      .eq('user_id', user.id)
+      .is('left_at', null);
+
+    if (memberError) {
+      showToast('Failed to load collaborations', 'error');
+      return;
+    }
+
+    const collabIds = (memberships || []).map((m) => m.collaboration_id);
+    if (collabIds.length === 0) {
+      setCollaborations([]);
+      setCollabLogs({});
+      return;
+    }
+
+    const [collabResult, logsResult] = await Promise.all([
+      supabase
+        .from('collaborations')
+        .select(
+          '*, collaboration_members(user_id, left_at), collaboration_goal_periods(id, collaboration_id, period_type, target_value)',
+        )
+        .in('id', collabIds)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('collaboration_logs')
+        .select('collaboration_id, user_id, date_logged, value')
+        .in('collaboration_id', collabIds)
+        .eq('completed', true),
+    ]);
+
+    if (collabResult.error) {
+      showToast('Failed to load collaborations', 'error');
+      return;
+    }
+
+    setCollaborations((collabResult.data || []) as CollaborationWithMembership[]);
+
+    const logsByCollab: Record<string, CollaborationLog[]> = {};
+    (logsResult.data || []).forEach((log) => {
+      if (!logsByCollab[log.collaboration_id]) {
+        logsByCollab[log.collaboration_id] = [];
+      }
+      logsByCollab[log.collaboration_id].push(log);
+    });
+    setCollabLogs(logsByCollab);
+  }, [user]);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    await Promise.all([fetchCompetitions(), fetchCollaborations()]);
     setLoading(false);
     setRefreshing(false);
-  }, [user]);
+  }, [fetchCompetitions, fetchCollaborations]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchCompetitions();
-    }, [fetchCompetitions]),
+      if (sectionParam === 'collabs' || sectionParam === 'collaborations') {
+        setListSection('collaborations');
+      } else if (sectionParam === 'active') {
+        setListSection('active');
+      } else if (sectionParam === 'competitions') {
+        setListSection('competitions');
+      }
+      fetchAll();
+    }, [fetchAll, sectionParam]),
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchCompetitions();
+    fetchAll();
   };
 
-  const handleJoinCompetition = async () => {
+  const handleJoin = async () => {
     if (!joinCode.trim()) {
       showToast('Please enter a join code', 'error');
       return;
@@ -211,54 +306,99 @@ export default function HomeScreen() {
     setJoining(true);
     const code = joinCode.trim().toUpperCase();
 
-    const { data: comp, error: findError } = await supabase
+    const { data: comp } = await supabase
       .from('competitions')
       .select('id, end_date')
       .eq('join_code', code)
-      .single();
+      .maybeSingle();
 
-    if (findError || !comp) {
+    if (comp) {
+      const { data: priorMembership } = await supabase
+        .from('participants')
+        .select('left_at')
+        .eq('competition_id', comp.id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      const { error: joinError } = await supabase.rpc('join_competition', { comp_id: comp.id });
+
+      if (joinError) {
+        const msg = joinError.message.toLowerCase();
+        if (msg.includes('already joined')) {
+          showToast('You are already in this competition', 'error');
+        } else if (msg.includes('ended')) {
+          showToast('This competition has ended', 'error');
+        } else {
+          showToast('Failed to join competition', 'error');
+        }
+        setJoining(false);
+        return;
+      }
+
+      await supabase.from('analytics_events').insert({
+        user_id: user.id,
+        event_type: 'competition_joined',
+        event_data: { competition_id: comp.id, join_code: code },
+      });
+
+      setJoining(false);
+      setJoinModalVisible(false);
+      setJoinCode('');
+      showToast(
+        priorMembership?.left_at ? 'Welcome back! Your progress was restored.' : 'Joined competition!',
+        'success',
+      );
+      fetchAll();
+      return;
+    }
+
+    const { data: collab } = await supabase
+      .from('collaborations')
+      .select('id, end_date')
+      .eq('join_code', code)
+      .maybeSingle();
+
+    if (!collab) {
       showToast('Invalid join code', 'error');
       setJoining(false);
       return;
     }
 
-    const { data: priorMembership } = await supabase
-      .from('participants')
+    const { data: priorCollabMembership } = await supabase
+      .from('collaboration_members')
       .select('left_at')
-      .eq('competition_id', comp.id)
+      .eq('collaboration_id', collab.id)
       .eq('user_id', user.id)
       .maybeSingle();
 
-    const { error: joinError } = await supabase.rpc('join_competition', { comp_id: comp.id });
+    const { error: collabJoinError } = await supabase.rpc('join_collaboration', {
+      collab_id: collab.id,
+    });
 
-    if (joinError) {
-      const msg = joinError.message.toLowerCase();
+    if (collabJoinError) {
+      const msg = collabJoinError.message.toLowerCase();
       if (msg.includes('already joined')) {
-        showToast('You are already in this competition', 'error');
+        showToast('You are already in this collaboration', 'error');
       } else if (msg.includes('ended')) {
-        showToast('This competition has ended', 'error');
+        showToast('This collaboration has ended', 'error');
       } else {
-        showToast('Failed to join competition', 'error');
+        showToast('Failed to join collaboration', 'error');
       }
       setJoining(false);
       return;
     }
 
-    await supabase.from('analytics_events').insert({
-      user_id: user.id,
-      event_type: 'competition_joined',
-      event_data: { competition_id: comp.id, join_code: code },
-    });
-
     setJoining(false);
     setJoinModalVisible(false);
     setJoinCode('');
     showToast(
-      priorMembership?.left_at ? 'Welcome back! Your progress was restored.' : 'Joined competition!',
+      priorCollabMembership?.left_at
+        ? 'Welcome back! Your progress was restored.'
+        : 'Joined collaboration!',
       'success',
     );
-    fetchCompetitions();
+    setListSection('collaborations');
+    fetchAll();
   };
 
   const isCompetitionActive = (comp: CompetitionWithParticipation) => {
@@ -334,6 +474,89 @@ export default function HomeScreen() {
     return { activeCompetitions: active, completedCompetitions: completed };
   }, [competitions, user?.id]);
 
+  const activeCollaborations = useMemo(
+    () => collaborations.filter((c) => isCollaborationActive(c)),
+    [collaborations],
+  );
+
+  const getCollabPeriodProgress = (
+    item: CollaborationWithMembership,
+  ): { summary: string; progressPct: number | null } | null => {
+    const logs = collabLogs[item.id] ?? [];
+
+    const build = (
+      periodLabel: string,
+      total: number,
+      target: number | null,
+    ): { summary: string; progressPct: number | null } => {
+      const summary =
+        target != null && target > 0
+          ? `${periodLabel}: ${formatCollabUnitScore(total, item.unit_label)} / ${formatCollabUnitScore(target, item.unit_label)}`
+          : `${periodLabel}: ${formatCollabUnitScore(total, item.unit_label)}`;
+      const progressPct =
+        target != null && target > 0 ? Math.min(100, (total / target) * 100) : null;
+      return { summary, progressPct };
+    };
+
+    if (item.goal_mode === 'overall') {
+      const bucket = getCurrentPeriodBucket('weekly', item.start_date, item.end_date ?? null);
+      if (!bucket) return null;
+      const total = sumLogsInBucket(logs, bucket);
+      const target =
+        item.overall_target_value != null ? toScoreNumber(item.overall_target_value) : null;
+      return build(`Week ${bucket.index}`, total, target);
+    }
+
+    const firstPeriod = item.collaboration_goal_periods[0];
+    if (!firstPeriod) return null;
+    const bucket = getCurrentPeriodBucket(
+      firstPeriod.period_type as 'weekly' | 'monthly' | 'yearly',
+      item.start_date,
+      item.end_date ?? null,
+    );
+    if (!bucket) return null;
+    const total = sumLogsInBucket(logs, bucket);
+    const target =
+      firstPeriod.target_value != null ? toScoreNumber(firstPeriod.target_value) : null;
+    const prefix =
+      firstPeriod.period_type === 'weekly'
+        ? `Week ${bucket.index}`
+        : firstPeriod.period_type === 'monthly'
+          ? `Month ${bucket.index}`
+          : `Year ${bucket.index}`;
+    return build(prefix, total, target);
+  };
+
+  const activeFeedItems = useMemo((): ActiveFeedItem[] => {
+    const items: ActiveFeedItem[] = [
+      ...activeCollaborations.map((item) => ({ kind: 'collab' as const, item })),
+      ...activeCompetitions.map((item) => ({ kind: 'competition' as const, item })),
+    ];
+    return items.sort((a, b) => b.item.start_date.localeCompare(a.item.start_date));
+  }, [activeCollaborations, activeCompetitions]);
+
+  const headerTitle =
+    listSection === 'competitions'
+      ? 'Competitions'
+      : listSection === 'collaborations'
+        ? 'Collaborations'
+        : listSection === 'completed'
+          ? 'Your Competitions'
+          : 'Active';
+
+  const headerSubtitle =
+    listSection === 'competitions'
+      ? 'Keep the streak going'
+      : listSection === 'collaborations'
+        ? 'Build together'
+        : listSection === 'completed'
+          ? 'Past challenges'
+          : 'Competitions and collaborations';
+
+  const handleHeaderPress = () => {
+    if (listSection !== 'active') setListSection('active');
+  };
+
   const displayedCompetitions =
     listSection === 'completed' ? completedCompetitions : activeCompetitions;
 
@@ -387,7 +610,8 @@ export default function HomeScreen() {
     const config = getCompetitionConfig(item);
     const colorSet = config.colorSet;
     const active = isCompetitionActive(item);
-    const unviewedEnded = listSection === 'active' && isUnviewedEnded(item);
+    const unviewedEnded =
+      (listSection === 'active' || listSection === 'competitions') && isUnviewedEnded(item);
     const daysLeft = getDaysRemaining(item);
     const participantCount = item.participants?.filter((p) => !p.left_at).length || 0;
     const resolvedScore = myScores[item.id];
@@ -507,28 +731,186 @@ export default function HomeScreen() {
     );
   };
 
+  const renderCollaboration = ({ item }: { item: CollaborationWithMembership }) => {
+    const colorSet = resolveCompetitionColorSet(item.color ?? 'teal');
+    const active = isCollaborationActive(item);
+    const continuous = isCollaborationContinuous(item);
+    const participantCount =
+      item.collaboration_members?.filter((m) => !m.left_at).length || 0;
+    const periodProgress = getCollabPeriodProgress(item);
+    const goalMet = periodProgress?.progressPct != null && periodProgress.progressPct >= 100;
+
+    return (
+      <TouchableOpacity
+        style={[styles.card, { borderLeftWidth: 4, borderLeftColor: colorSet[500] }]}
+        onPress={() => router.push(`/collaboration/${item.id}` as Href)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={[styles.typeChipSmall, { backgroundColor: colorSet[100] }]}>
+              <CompetitionIcon icon={(item.icon as any) ?? 'users'} size={14} colorSet={colorSet} />
+              <Text style={[styles.typeChipText, { color: colorSet[700] }]}>Collab</Text>
+            </View>
+            <View style={[styles.statusBadge, active ? styles.statusActive : styles.statusEnded]}>
+              <Text style={[styles.statusText, active ? styles.statusTextActive : styles.statusTextEnded]}>
+                {active ? (continuous ? 'Ongoing' : 'Active') : 'Ended'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.participantCount}>
+            <Users size={14} color={Colors.neutral[500]} />
+            <Text style={styles.participantText}>{participantCount}</Text>
+          </View>
+        </View>
+
+        <View style={styles.cardBody}>
+          <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
+          {item.description ? (
+            <Text style={styles.cardDescription} numberOfLines={2}>
+              {item.description}
+            </Text>
+          ) : null}
+          <View style={styles.dateRow}>
+            <Calendar size={14} color={Colors.neutral[400]} />
+            <Text style={styles.dateText}>
+              {formatDate(item.start_date)}
+              {item.end_date ? ` - ${formatDate(item.end_date)}` : ' - Ongoing'}
+            </Text>
+          </View>
+        </View>
+
+        {periodProgress && (
+          <View style={styles.collabSummary}>
+            <Handshake size={16} color={goalMet ? Colors.warm[500] : colorSet[500]} />
+            <Text
+              style={[
+                styles.collabSummaryText,
+                { color: goalMet ? Colors.warm[500] : colorSet[600] },
+              ]}
+              numberOfLines={1}
+            >
+              {periodProgress.summary}
+            </Text>
+            {periodProgress.progressPct != null && (
+              <View style={styles.collabProgressBarBg}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    {
+                      width: `${periodProgress.progressPct}%`,
+                      backgroundColor: goalMet ? Colors.warm[500] : colorSet[500],
+                    },
+                  ]}
+                />
+              </View>
+            )}
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  const showActiveFeed = listSection === 'active';
+  const showCompetitionsOnly = listSection === 'competitions';
+  const showCollaborationsOnly = listSection === 'collaborations';
+  const listEmpty = showActiveFeed
+    ? activeFeedItems.length === 0
+    : showCompetitionsOnly
+      ? activeCompetitions.length === 0
+      : showCollaborationsOnly
+        ? activeCollaborations.length === 0
+        : displayedCompetitions.length === 0;
+
+  const renderActiveFeedItem = ({ item: feedItem }: { item: ActiveFeedItem }) => {
+    if (feedItem.kind === 'collab') {
+      return renderCollaboration({ item: feedItem.item });
+    }
+    return renderCompetition({ item: feedItem.item });
+  };
+
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: Math.max(insets.top + Spacing.md, Spacing.xl) }]}>
         <TouchableOpacity
-          onPress={() => setListSection('active')}
+          onPress={handleHeaderPress}
           activeOpacity={listSection === 'active' ? 1 : 0.7}
         >
-          <Text style={styles.greeting}>Your Competitions</Text>
-          <Text style={styles.subGreeting}>
-            {listSection === 'completed' ? 'Past challenges' : 'Keep the streak going'}
-          </Text>
+          <Text style={styles.greeting}>{headerTitle}</Text>
+          <Text style={styles.subGreeting}>{headerSubtitle}</Text>
         </TouchableOpacity>
-        <View style={styles.headerPills}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.headerPills}
+        >
+          <TouchableOpacity
+            style={[
+              styles.headerPill,
+              listSection === 'active' && styles.headerPillActive,
+            ]}
+            onPress={() => setListSection('active')}
+          >
+            <Zap
+              size={16}
+              color={listSection === 'active' ? '#FFFFFF' : Colors.primary[500]}
+            />
+            <Text
+              style={[
+                styles.headerPillText,
+                listSection === 'active' && styles.headerPillTextActive,
+              ]}
+            >
+              Active
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.headerPillCompleted,
+              listSection === 'competitions' && styles.headerPillCompletedActive,
+            ]}
+            onPress={() => setListSection('competitions')}
+          >
+            <Trophy
+              size={16}
+              color={listSection === 'competitions' ? '#FFFFFF' : Colors.warm[500]}
+            />
+            <Text
+              style={[
+                styles.headerPillCompletedText,
+                listSection === 'competitions' && styles.headerPillTextActive,
+              ]}
+            >
+              Competitions
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.headerPillCollabs,
+              listSection === 'collaborations' && styles.headerPillCollabsActive,
+            ]}
+            onPress={() => setListSection('collaborations')}
+          >
+            <Handshake
+              size={16}
+              color={listSection === 'collaborations' ? '#FFFFFF' : Colors.teal[500]}
+            />
+            <Text
+              style={[
+                styles.headerPillCollabsText,
+                listSection === 'collaborations' && styles.headerPillTextActive,
+              ]}
+            >
+              Collabs
+            </Text>
+          </TouchableOpacity>
           {completedCompetitions.length > 0 && (
             <TouchableOpacity
               style={[
-                styles.headerPill,
-                listSection === 'completed' && styles.headerPillActive,
+                styles.headerPillCompleted,
+                listSection === 'completed' && styles.headerPillCompletedActive,
               ]}
-              onPress={() =>
-                setListSection((prev) => (prev === 'completed' ? 'active' : 'completed'))
-              }
+              onPress={() => setListSection('completed')}
             >
               <Trophy
                 size={16}
@@ -536,7 +918,7 @@ export default function HomeScreen() {
               />
               <Text
                 style={[
-                  styles.headerPillText,
+                  styles.headerPillCompletedText,
                   listSection === 'completed' && styles.headerPillTextActive,
                 ]}
               >
@@ -548,27 +930,55 @@ export default function HomeScreen() {
             <LogIn size={18} color={Colors.primary[600]} />
             <Text style={styles.joinButtonText}>Join</Text>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
       </View>
 
-      {displayedCompetitions.length === 0 ? (
+      {listEmpty ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyIconContainer}>
-            <Trophy size={48} color={Colors.neutral[300]} />
+            {showActiveFeed ? (
+              <Zap size={48} color={Colors.neutral[300]} />
+            ) : showCollaborationsOnly ? (
+              <Handshake size={48} color={Colors.neutral[300]} />
+            ) : (
+              <Trophy size={48} color={Colors.neutral[300]} />
+            )}
           </View>
           <Text style={styles.emptyTitle}>
-            {listSection === 'completed' ? 'No completed challenges yet' : 'No competitions yet'}
+            {showActiveFeed
+              ? 'Nothing active yet'
+              : showCompetitionsOnly
+                ? 'No competitions yet'
+                : showCollaborationsOnly
+                  ? 'No collaborations yet'
+                  : listSection === 'completed'
+                    ? 'No completed challenges yet'
+                    : 'No competitions yet'}
           </Text>
           <Text style={styles.emptySubtitle}>
-            {listSection === 'completed'
-              ? 'Finished challenges will appear here after you view their results.'
-              : 'Create your first competition or join one with a code!'}
+            {showActiveFeed
+              ? 'Create a competition or collaboration, or join one with a code!'
+              : showCompetitionsOnly
+                ? 'Create your first competition or join one with a code!'
+                : showCollaborationsOnly
+                  ? 'Create a collaboration and invite friends to build goals together!'
+                  : listSection === 'completed'
+                    ? 'Finished challenges will appear here after you view their results.'
+                    : 'Create your first competition or join one with a code!'}
           </Text>
-          {listSection === 'active' && (
+          {(listSection === 'active' || showCompetitionsOnly || showCollaborationsOnly) && (
           <View style={styles.emptyActions}>
             <TouchableOpacity
               style={styles.emptyCreateButton}
-              onPress={() => router.push('/(tabs)/create')}
+              onPress={() =>
+                router.push(
+                  showCollaborationsOnly
+                    ? '/(tabs)/create?type=collaboration'
+                    : showCompetitionsOnly
+                      ? '/(tabs)/create?type=competition'
+                      : '/(tabs)/create',
+                )
+              }
             >
               <Plus size={18} color="#FFFFFF" />
               <Text style={styles.emptyCreateText}>Create</Text>
@@ -583,6 +993,28 @@ export default function HomeScreen() {
           </View>
           )}
         </View>
+      ) : showActiveFeed ? (
+        <FlatList
+          data={activeFeedItems}
+          renderItem={renderActiveFeedItem}
+          keyExtractor={(item) => `${item.kind}-${item.item.id}`}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary[500]} />
+          }
+          showsVerticalScrollIndicator={false}
+        />
+      ) : showCollaborationsOnly ? (
+        <FlatList
+          data={activeCollaborations}
+          renderItem={renderCollaboration}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary[500]} />
+          }
+          showsVerticalScrollIndicator={false}
+        />
       ) : (
         <FlatList
           data={displayedCompetitions}
@@ -598,7 +1030,15 @@ export default function HomeScreen() {
 
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => router.push('/(tabs)/create')}
+        onPress={() =>
+          router.push(
+            listSection === 'competitions'
+              ? '/(tabs)/create?type=competition'
+              : listSection === 'collaborations'
+                ? '/(tabs)/create?type=collaboration'
+                : '/(tabs)/create',
+          )
+        }
         activeOpacity={0.8}
       >
         <Plus size={28} color="#FFFFFF" />
@@ -619,9 +1059,9 @@ export default function HomeScreen() {
             keyboardShouldPersistTaps="handled"
           >
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Join a Competition</Text>
+            <Text style={styles.modalTitle}>Join with Code</Text>
             <Text style={styles.modalSubtitle}>
-              Enter the join code shared by the competition creator
+              Enter a join code for a competition or collaboration
             </Text>
 
             <TextInput
@@ -647,7 +1087,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalJoinButton, joining && styles.modalJoinButtonDisabled]}
-                onPress={handleJoinCompetition}
+                onPress={handleJoin}
                 disabled={joining}
               >
                 {joining ? (
@@ -693,6 +1133,9 @@ function createStyles(colors: ThemeColors) {
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.xl,
     paddingBottom: Spacing.md,
+    backgroundColor: colors.headerBackground,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.mutedBorder,
   },
   greeting: {
     fontSize: FontSizes.xxl,
@@ -713,18 +1156,52 @@ function createStyles(colors: ThemeColors) {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.xs,
-    backgroundColor: Colors.warm[100],
+    backgroundColor: Colors.primary[100],
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     borderRadius: BorderRadius.full,
   },
   headerPillActive: {
+    backgroundColor: Colors.primary[500],
+  },
+  headerPillCollabs: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.teal[100],
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+  },
+  headerPillCollabsActive: {
+    backgroundColor: Colors.teal[500],
+  },
+  headerPillCollabsText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: Colors.teal[500],
+  },
+  headerPillCompleted: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.warm[100],
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+  },
+  headerPillCompletedActive: {
     backgroundColor: Colors.warm[500],
+  },
+  headerPillCompletedText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: Colors.warm[500],
   },
   headerPillText: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
-    color: Colors.warm[500],
+    color: Colors.primary[500],
   },
   headerPillTextActive: {
     color: '#FFFFFF',
@@ -918,6 +1395,28 @@ function createStyles(colors: ThemeColors) {
     fontSize: FontSizes.sm,
     fontWeight: '600',
     color: colors.textSecondary,
+  },
+  collabSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.mutedBorder,
+  },
+  collabSummaryText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
+  collabProgressBarBg: {
+    flex: 1,
+    minWidth: 56,
+    height: 6,
+    backgroundColor: colors.progressTrack,
+    borderRadius: BorderRadius.full,
+    overflow: 'hidden',
   },
   emptyState: {
     flex: 1,

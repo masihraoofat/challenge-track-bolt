@@ -10,7 +10,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, type Href } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
@@ -29,16 +29,19 @@ import {
   type FriendUser,
   type FriendRequest,
   type CompetitionInvite,
+  type CollaborationInvite,
   fetchFriends,
   fetchIncomingRequests,
   fetchOutgoingRequests,
   fetchCompetitionInvites,
+  fetchCollaborationInvites,
   searchUsers,
   sendFriendRequest,
   acceptFriendRequest,
   declineFriendRequest,
   cancelFriendRequest,
   respondCompetitionInvitation,
+  respondCollaborationInvitation,
 } from '@/lib/friends';
 
 type Tab = 'friends' | 'requests' | 'find';
@@ -54,6 +57,7 @@ export default function FriendsScreen() {
   const [incoming, setIncoming] = useState<FriendRequest[]>([]);
   const [outgoing, setOutgoing] = useState<FriendRequest[]>([]);
   const [invites, setInvites] = useState<CompetitionInvite[]>([]);
+  const [collabInvites, setCollabInvites] = useState<CollaborationInvite[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<FriendUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,17 +71,20 @@ export default function FriendsScreen() {
   const fetchData = useCallback(async () => {
     if (!user) return;
 
-    const [friendsData, incomingData, outgoingData, invitesData] = await Promise.all([
+    const [friendsData, incomingData, outgoingData, invitesData, collabInvitesData] =
+      await Promise.all([
       fetchFriends(user.id),
       fetchIncomingRequests(user.id),
       fetchOutgoingRequests(user.id),
       fetchCompetitionInvites(user.id),
+      fetchCollaborationInvites(user.id),
     ]);
 
     setFriends(friendsData);
     setIncoming(incomingData);
     setOutgoing(outgoingData);
     setInvites(invitesData);
+    setCollabInvites(collabInvitesData);
     setLoading(false);
     setRefreshing(false);
   }, [user]);
@@ -160,7 +167,7 @@ export default function FriendsScreen() {
     fetchData();
   };
 
-  const handleInviteResponse = async (invitationId: string, accept: boolean) => {
+  const handleCompetitionInviteResponse = async (invitationId: string, accept: boolean) => {
     setActionInviteId(invitationId);
     const { error } = await respondCompetitionInvitation(invitationId, accept);
     setActionInviteId(null);
@@ -175,6 +182,24 @@ export default function FriendsScreen() {
     if (accept) {
       const invite = invites.find((i) => i.id === invitationId);
       if (invite) router.push(`/competition/${invite.competition.id}`);
+    }
+  };
+
+  const handleCollaborationInviteResponse = async (invitationId: string, accept: boolean) => {
+    setActionInviteId(invitationId);
+    const { error } = await respondCollaborationInvitation(invitationId, accept);
+    setActionInviteId(null);
+
+    if (error) {
+      showToast(error, 'error');
+      return;
+    }
+
+    showToast(accept ? 'Joined collaboration!' : 'Invitation declined', accept ? 'success' : 'info');
+    fetchData();
+    if (accept) {
+      const invite = collabInvites.find((i) => i.id === invitationId);
+      if (invite) router.push(`/collaboration/${invite.collaboration.id}` as Href);
     }
   };
 
@@ -222,14 +247,56 @@ export default function FriendsScreen() {
         <View style={styles.inviteActions}>
           <TouchableOpacity
             style={[styles.declineButton, busy && styles.buttonDisabled]}
-            onPress={() => handleInviteResponse(invite.id, false)}
+            onPress={() => handleCompetitionInviteResponse(invite.id, false)}
             disabled={busy}
           >
             <X size={16} color={colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.acceptButton, busy && styles.buttonDisabled]}
-            onPress={() => handleInviteResponse(invite.id, true)}
+            onPress={() => handleCompetitionInviteResponse(invite.id, true)}
+            disabled={busy}
+          >
+            {busy ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <>
+                <Check size={16} color="#FFFFFF" />
+                <Text style={styles.acceptButtonText}>Join</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const renderCollabInvite = (invite: CollaborationInvite) => {
+    const colorSet = resolveCompetitionColorSet(invite.collaboration.color);
+    const busy = actionInviteId === invite.id;
+
+    return (
+      <View style={styles.inviteCard} key={invite.id}>
+        <View style={styles.inviteHeader}>
+          <CompetitionIcon icon={invite.collaboration.icon as CompetitionIconName} size={18} colorSet={colorSet} />
+          <View style={styles.inviteInfo}>
+            <Text style={styles.inviteTitle}>{invite.collaboration.title}</Text>
+            <Text style={styles.inviteSubtext}>
+              Collab invite from {invite.inviter.username}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.inviteActions}>
+          <TouchableOpacity
+            style={[styles.declineButton, busy && styles.buttonDisabled]}
+            onPress={() => handleCollaborationInviteResponse(invite.id, false)}
+            disabled={busy}
+          >
+            <X size={16} color={colors.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.acceptButton, busy && styles.buttonDisabled]}
+            onPress={() => handleCollaborationInviteResponse(invite.id, true)}
             disabled={busy}
           >
             {busy ? (
@@ -254,10 +321,20 @@ export default function FriendsScreen() {
         <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData(); }} />
       }
       ListHeaderComponent={
-        invites.length > 0 ? (
+        invites.length > 0 || collabInvites.length > 0 ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Challenge Invites</Text>
-            {invites.map(renderInvite)}
+            {invites.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>Challenge Invites</Text>
+                {invites.map(renderInvite)}
+              </>
+            )}
+            {collabInvites.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>Collaboration Invites</Text>
+                {collabInvites.map(renderCollabInvite)}
+              </>
+            )}
           </View>
         ) : null
       }
